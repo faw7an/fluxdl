@@ -1,0 +1,42 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install Dependencies
+        run: bun install
+
+      - name: Build Application (Linux)
+        run: bun run build:linux
+        
+      # Electrobun normally emits to build/ or dist/ output paths depending on configuration schema setup
+      # Assuming it renders into the traditional output folder designated by Electrobun configs or 'build/'
+      - name: Archive Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxdl-linux-build
+          path: build/
+
+      - name: Publish to Github Releases
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            build/**/*.AppImage
+            build/**/*.deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

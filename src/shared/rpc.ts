@@ -1,0 +1,36 @@
+import type { RPCSchema } from "electrobun/bun";
+import type { Download } from "../mainview/lib/downloads-data";
+
+export type { Download };
+
+export type AppRPC = {
+	bun: RPCSchema<{
+		requests: {
+			getDownloads: { params: Record<string, never>; response: Download[] };
+			startDownload: {
+				params: { url: string; category: string; segments: number };
+				response: { id: string };
+			};
+			pauseDownload: { params: { id: string }; response: boolean };
+			resumeDownload: { params: { id: string }; response: boolean };
+			removeDownload: { params: { id: string }; response: boolean };
+			getSettings: { params: Record<string, never>; response: Record<string, string> };
+			updateSetting: { params: { key: string; value: string }; response: boolean };
+		};
+		messages: {
+			downloadProgress: {
+				id: string;
+				downloadedBytes: number;
+				speedBps: number;
+				activeSegments: number;
+				status: Download["status"];
+			};
+			downloadComplete: { id: string; path: string };
+			downloadError: { id: string; error: string };
+		};
+	}>;
+	webview: RPCSchema<{
+		requests: Record<string, never>;
+		messages: Record<string, never>;
+	}>;
+};
