@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="oklch(0.24 0.02 265)" />
+      <stop offset="100%" stop-color="oklch(0.17 0.018 265)" />
+    </linearGradient>
+
+    <linearGradient id="fluxGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="oklch(0.68 0.16 256)" /> <!-- primary -->
+      <stop offset="100%" stop-color="oklch(0.46 0.17 260)" /> <!-- primary-deep -->
+    </linearGradient>
+
+    <filter id="neonGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+    </filter>
+  </defs>
+
+  <!-- App Icon Background Squircle -->
+  <rect x="0" y="0" width="256" height="256" rx="56" fill="url(#bgGrad)" />
+  
+  <rect x="1" y="1" width="254" height="254" rx="55" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2" />
+
+  <!-- GLOW LAYER -->
+  <g filter="url(#neonGlow)" opacity="0.6">
+    <path 
+      d="M 76 128 L 76 96 A 52 52 0 0 1 180 96 L 180 128" 
+      fill="none" stroke="url(#fluxGrad)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" 
+    />
+    <path 
+      d="M 76 160 L 128 212 L 180 160" 
+      fill="none" stroke="url(#fluxGrad)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" 
+    />
+  </g>
+
+  <!-- SOLID LAYER -->
+  <g>
+    <path 
+      d="M 76 128 L 76 96 A 52 52 0 0 1 180 96 L 180 128" 
+      fill="none" stroke="url(#fluxGrad)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" 
+    />
+    <path 
+      d="M 76 160 L 128 212 L 180 160" 
+      fill="none" stroke="url(#fluxGrad)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" 
+    />
+  </g>
+</svg>

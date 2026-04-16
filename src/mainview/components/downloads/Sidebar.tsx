@@ -8,9 +8,9 @@ import {
   Music,
   Package,
   FileText,
-  Download as DownloadIcon,
   Settings,
 } from "lucide-react";
+import { FluxLogo } from "@/components/ui/FluxLogo";
 import { cn } from "@/lib/utils";
 import { formatSpeed } from "@/lib/downloads-data";
 
@@ -65,7 +65,7 @@ export function Sidebar({ filter, onFilterChange, counts, totalDownBps, totalUpB
           className="w-8 h-8 rounded-lg flex items-center justify-center"
           style={{ background: "var(--gradient-primary)", boxShadow: "var(--shadow-glow)" }}
         >
-          <DownloadIcon className="w-4 h-4 text-primary-foreground" strokeWidth={2.5} />
+          <FluxLogo className="w-4 h-4 text-primary-foreground" />
         </div>
         <div className="text-[16px] font-semibold tracking-wide">
           Flux<span className="text-primary font-light">DL</span>

@@ -4,7 +4,7 @@ export default {
 	app: {
 		name: "FluxDL",
 		identifier: "fluxdl.electrobun.dev",
-		version: "1.0.4",
+		version: "1.0.5",
 	},
 	build: {
 		// Vite builds to dist/, we copy from there
@@ -19,9 +19,11 @@ export default {
 		},
 		linux: {
 			bundleCEF: false,
+			icon: "src/mainview/assets/icon-512.png",
 		},
 		win: {
 			bundleCEF: false,
+			icon: "src/mainview/assets/icon-512.png",
 		},
 	},
 	release: {
