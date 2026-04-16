@@ -34,20 +34,38 @@ let engine: DownloadsEngine;
 const myWebviewRPC = BrowserView.defineRPC<AppRPC>({
 	handlers: {
 		requests: {
-			getDownloads: async () => engine.getAll(),
+			getDownloads: async () => {
+				if (!engine) return [];
+				return engine.getAll();
+			},
 
-			startDownload: async (params: { url: string; category: string; segments: number }) =>
-				engine.start(params.url, params.category, params.segments),
+			startDownload: async (params: { url: string; category: string; segments: number }) => {
+				if (!engine) throw new Error("Engine not initialized");
+				return engine.start(params.url, params.category, params.segments);
+			},
 
-			pauseDownload: async (params: { id: string }) => engine.pause(params.id),
+			pauseDownload: async (params: { id: string }) => {
+				if (!engine) return false;
+				return engine.pause(params.id);
+			},
 
-			resumeDownload: async (params: { id: string }) => engine.resume(params.id),
+			resumeDownload: async (params: { id: string }) => {
+				if (!engine) return false;
+				return engine.resume(params.id);
+			},
 
-			removeDownload: async (params: { id: string }) => engine.remove(params.id),
+			removeDownload: async (params: { id: string }) => {
+				if (!engine) return false;
+				return engine.remove(params.id);
+			},
 
-			getSettings: async () => engine.getAllSettings(),
+			getSettings: async () => {
+				if (!engine) return {};
+				return engine.getAllSettings();
+			},
 
 			updateSetting: async (params: { key: string; value: string }) => {
+				if (!engine) return false;
 				engine.updateSetting(params.key, params.value);
 				return true;
 			},
@@ -69,6 +87,7 @@ const myWebviewRPC = BrowserView.defineRPC<AppRPC>({
 			},
 
 			fetchUrlInfo: async (params: { url: string }) => {
+				if (!engine) throw new Error("Engine not initialized");
 				return engine.fetchUrlInfo(params.url);
 			},
 		},
