@@ -24,7 +24,7 @@ jobs:
         run: bun install
 
       - name: Build Application (Linux)
-        run: bun run build:linux
+        run: bun run build:canary
         
       # Electrobun normally emits to build/ or dist/ output paths depending on configuration schema setup
       # Assuming it renders into the traditional output folder designated by Electrobun configs or 'build/'
@@ -32,13 +32,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fluxdl-linux-build
-          path: build/
+          path: artifacts/
 
       - name: Publish to Github Releases
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            build/**/*
+            artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
