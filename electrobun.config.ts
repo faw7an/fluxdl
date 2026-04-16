@@ -4,7 +4,7 @@ export default {
 	app: {
 		name: "FluxDL",
 		identifier: "fluxdl.electrobun.dev",
-		version: "1.0.2",
+		version: "1.0.4",
 	},
 	build: {
 		// Vite builds to dist/, we copy from there
