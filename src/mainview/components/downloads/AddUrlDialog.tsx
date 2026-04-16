@@ -24,7 +24,7 @@ interface Props {
   onAdd: (data: { url: string; category: string; segments: number }) => void;
 }
 
-export function AddUrlDialog({ open, onOpenChange, onAdd }: Props) {
+export function AddUrlModal({ open, onOpenChange, onAdd }: Props) {
   const [url, setUrl] = useState("");
   const [category, setCategory] = useState("Software");
   const [segments, setSegments] = useState("8");
