@@ -108,6 +108,25 @@ const mainWindow = new BrowserWindow({
 	rpc: myWebviewRPC,
 });
 
+// Linux/Hyprland Stabilization: Explicitly reinforce the RPC bridge injection
+// 1. Ensure sandbox is OFF (default is false, but we make it explicit)
+// (Note: Electrobun doesn't have a top-level 'sandbox' key in the BrowserWindow constructor, 
+// it's usually inherited from BrowserView, but we'll ensure the view is correctly configured)
+
+// 2. Late-binding attachment
+setTimeout(() => {
+	mainWindow.rpc = myWebviewRPC;
+	if (mainWindow.mainview) {
+		mainWindow.mainview.rpc = myWebviewRPC;
+	}
+}, 100);
+
+// Explicitly ensure the RPC bridge is attached to the view and window
+mainWindow.rpc = myWebviewRPC;
+if (mainWindow.mainview) {
+	mainWindow.mainview.rpc = myWebviewRPC;
+}
+
 // ── Download engine (late init to capture mainWindow) ─────────────────────
 engine = new DownloadsEngine(
 	// onProgress

@@ -9,7 +9,7 @@ import { AddUrlModal } from "@/components/downloads/AddUrlDialog";
 import { type Download, formatBytes } from "@/lib/downloads-data";
 import { cn } from "@/lib/utils";
 
-import { getRPC } from "@/lib/rpc-helper";
+import { getRPC, waitForRPC } from "@/lib/rpc-helper";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const SUB_TABS = ["all", "downloading", "paused", "queued", "done"] as const;
@@ -25,68 +25,71 @@ function App() {
 	const [addOpen, setAddOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [sortBy, setSortBy] = useState<"newest" | "oldest" | "name" | "size" | "progress">("newest");
-
-	// ── RPC bootstrap ──────────────────────────────────────────────
+	// ── RPC sync and message handlers ───────────────────────────────────────────
 	useEffect(() => {
-		const rpc = getRPC();
-		if (!rpc) {
-			console.warn("No Electrobun RPC available — running without backend.");
-			return;
-		}
+		let isMounted = true;
+		let off: (() => void) | undefined;
 
-		// Load initial queue from Bun
-		rpc.request.getDownloads({}).then((list) => {
-			setDownloads(list);
-			if (list.length > 0) setSelectedId(list[0].id);
-		});
+		const init = async () => {
+			const ok = await waitForRPC();
+			if (!ok || !isMounted) return;
 
-		// Listen to live updates pushed by Bun
-		const off = rpc.onMessage((name: any, payload: any) => {
-			const p = payload as Record<string, any>;
+			const rpc = getRPC();
+			if (!rpc) return;
 
-			if (name === "downloadProgress") {
-				const { id, downloadedBytes, speedBps, activeSegments, status } = p as {
-					id: string;
-					downloadedBytes: number;
-					speedBps: number;
-					activeSegments: number;
-					status: Download["status"];
-				};
-				setDownloads((prev) =>
-					prev.map((d) =>
-						d.id === id ? { ...d, downloadedBytes, speedBps, activeSegments, status } : d,
-					),
-				);
+			// Load initial queue
+			const list = await rpc.request.getDownloads({});
+			if (isMounted) {
+				setDownloads(list);
+				if (list.length > 0) setSelectedId(list[0].id);
 			}
 
-			if (name === "downloadComplete") {
-				const { id } = p as { id: string; path: string };
-				setDownloads((prev) =>
-					prev.map((d) =>
-						d.id === id
-							? { ...d, status: "done", speedBps: 0, activeSegments: 0, downloadedBytes: d.sizeBytes }
-							: d,
-					),
-				);
-				// Show just the filename from path
-				const filename = (p.path as string).split("/").pop() ?? "file";
-				toast.success(`Completed: ${filename}`);
-			}
+			// Listen to live updates
+			off = rpc.onMessage((name: any, payload: any) => {
+				const p = payload as Record<string, any>;
 
-			if (name === "downloadError") {
-				const { id, error } = p as { id: string; error: string };
-				setDownloads((prev) =>
-					prev.map((d) =>
-						d.id === id
-							? { ...d, status: "error", speedBps: 0, activeSegments: 0, error }
-							: d,
-					),
-				);
-				toast.error(`Download failed: ${error}`);
-			}
-		});
+				if (name === "downloadProgress") {
+					const { id, downloadedBytes, speedBps, activeSegments, status } = p as any;
+					setDownloads((prev) =>
+						prev.map((d) =>
+							d.id === id ? { ...d, downloadedBytes, speedBps, activeSegments, status } : d,
+						),
+					);
+				}
 
-		return () => off();
+				if (name === "downloadComplete") {
+					const { id, path } = p as any;
+					setDownloads((prev) =>
+						prev.map((d) =>
+							d.id === id
+								? { ...d, status: "done", speedBps: 0, activeSegments: 0, downloadedBytes: d.sizeBytes }
+								: d,
+						),
+					);
+					const filename = path.split("/").pop() ?? "file";
+					toast.success(`Completed: ${filename}`);
+				}
+
+				if (name === "downloadError") {
+					const { id, error } = p as any;
+					setDownloads((prev) =>
+						prev.map((d) =>
+							d.id === id
+								? { ...d, status: "error", speedBps: 0, activeSegments: 0, error }
+								: d,
+						),
+					);
+					toast.error(`Download failed: ${error}`);
+				}
+			});
+		};
+
+		init();
+
+		return () => {
+			isMounted = false;
+			if (off) off();
+		};
 	}, []);
 
 	// ── Actions ────────────────────────────────────────────────────

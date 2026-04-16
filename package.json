@@ -4,6 +4,7 @@
 	"description": "Electrobun app with React, Tailwind CSS, and Vite HMR",
 	"scripts": {
 		"start": "vite build && electrobun dev",
+		"dev:vite": "vite build",
 		"dev": "GDK_SCALE=1 GDK_DPI_SCALE=1.25 electrobun dev --watch",
 		"dev:hmr": "concurrently \"bun run hmr\" \"bun run start\"",
 		"hmr": "vite --port 5173",

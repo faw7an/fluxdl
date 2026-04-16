@@ -7,40 +7,62 @@ interface ElectrobunWindow extends Window {
 			onMessage: (handler: (name: keyof AppRPC["bun"]["messages"] | string, payload: any) => void) => () => void;
 		};
 	};
+	__electrobun_rpc?: any;
+	rpc?: any;
 }
 
 /**
- * Robustly retrieves the Electrobun RPC bridge.
- * Returns null if the bridge is not yet injected or available.
+ * Diagnostic utility to scan the window for the Electrobun bridge.
+ * Useful for debugging Linux/Wayland injection issues.
  */
-export function getRPC() {
-	const win = window as unknown as ElectrobunWindow;
+function scanForBridge(): any | null {
+	const win = window as any;
 	
-	// Check for standard high-level bridge
-	if (win.electrobun?.rpc) {
-		return win.electrobun.rpc;
-	}
+	// 1. Check known locations
+	if (win.electrobun?.rpc) return win.electrobun.rpc;
+	if (win.__electrobun_rpc) return win.__electrobun_rpc;
+	if (win.rpc?.request && typeof win.rpc.request === 'function') return win.rpc;
 
-	// Logging for diagnosis if called while missing
-	if (process.env.NODE_ENV !== "production") {
-		console.warn("RPC bridge requested but window.electrobun.rpc is missing.");
+	// 2. Scan all properties for bridge-like signatures
+	const candidates = Object.keys(win).filter(key => 
+		key.toLowerCase().includes("rpc") || 
+		key.toLowerCase().includes("electro")
+	);
+
+	for (const key of candidates) {
+		const val = win[key];
+		if (val && typeof val === 'object' && (val.request || val.onMessage)) {
+			console.log(`[FluxDL Debug] Potential bridge found at window.${key}`);
+			return val;
+		}
 	}
 
 	return null;
+}
+
+export function getRPC() {
+	return scanForBridge();
 }
 
 /**
  * Helper to wait for the RPC bridge to be ready.
- * Useful for startup sequences.
+ * Essential for apps running on Linux where injection can be slightly async.
  */
-export async function waitForRPC(timeoutMs = 2000): Promise<AppRPC["bun"]["requests"] | null> {
+export async function waitForRPC(timeoutMs = 10000): Promise<boolean> {
 	const start = Date.now();
+	console.log(`[FluxDL Debug] Waiting for RPC bridge (timeout: ${timeoutMs}ms)...`);
 	
 	while (Date.now() - start < timeoutMs) {
 		const rpc = getRPC();
-		if (rpc) return rpc.request;
-		await new Promise(resolve => setTimeout(resolve, 50));
+		if (rpc) {
+			console.log("[FluxDL Debug] RPC Bridge connected successfully.");
+			return true;
+		}
+		await new Promise(resolve => setTimeout(resolve, 100));
 	}
 	
-	return null;
+	console.error(`[FluxDL Error] RPC Bridge failed to connect after ${timeoutMs}ms.`);
+	// List everything for one final check
+	console.log("[FluxDL Debug] Window Keys:", Object.keys(window).filter(k => !k.startsWith("webkit")));
+	return false;
 }
