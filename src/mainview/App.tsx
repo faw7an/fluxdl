@@ -236,6 +236,7 @@ function App() {
 				counts={counts}
 				totalDownBps={totalDownBps}
 				totalUpBps={totalDownBps * 0.04}
+				onOpenSettings={() => setSettingsOpen(true)}
 			/>
 
 			<main className="flex-1 flex flex-col overflow-hidden">

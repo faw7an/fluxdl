@@ -30,6 +30,7 @@ interface Props {
   counts: Counts;
   totalDownBps: number;
   totalUpBps: number;
+  onOpenSettings: () => void;
 }
 
 const navItems: {
@@ -52,7 +53,7 @@ const categories = [
   { label: "Documents", icon: FileText },
 ];
 
-export function Sidebar({ filter, onFilterChange, counts, totalDownBps, totalUpBps }: Props) {
+export function Sidebar({ filter, onFilterChange, counts, totalDownBps, totalUpBps, onOpenSettings }: Props) {
   const maxBps = 30 * 1024 * 1024;
   const downPct = Math.min(100, (totalDownBps / maxBps) * 100);
   const upPct = Math.min(100, (totalUpBps / maxBps) * 100);
@@ -133,7 +134,10 @@ export function Sidebar({ filter, onFilterChange, counts, totalDownBps, totalUpB
           <div className="h-2" />
           <SpeedRow label="Upload" value={formatSpeed(totalUpBps)} color="primary" pct={upPct} />
         </div>
-        <button className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground transition-colors">
+        <button 
+          onClick={onOpenSettings}
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground transition-colors"
+        >
           <Settings className="w-[15px] h-[15px]" />
           Settings
         </button>
