@@ -10,7 +10,7 @@ import {
   FileText,
   Settings,
 } from "lucide-react";
-import { FluxLogo } from "@/components/ui/FluxLogo";
+import logoPng from "@/assets/icon-512.png";
 import { cn } from "@/lib/utils";
 import { formatSpeed } from "@/lib/downloads-data";
 
@@ -62,10 +62,10 @@ export function Sidebar({ filter, onFilterChange, counts, totalDownBps, totalUpB
       {/* Logo */}
       <div className="px-5 pt-5 pb-3 flex items-center gap-2.5">
         <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center bg-[#1c1c24] border border-white/5"
+          className="w-8 h-8 rounded-lg flex items-center justify-center bg-[#1c1c24] border border-white/5 overflow-hidden"
           style={{ boxShadow: "0 0 15px -5px rgba(79, 70, 229, 0.3)" }}
         >
-          <FluxLogo className="w-4 h-4" />
+          <img src={logoPng} className="w-full h-full object-contain" alt="FluxDL Logo" />
         </div>
         <div className="text-[16px] font-semibold tracking-wide">
           Flux<span className="text-primary font-light">DL</span>
