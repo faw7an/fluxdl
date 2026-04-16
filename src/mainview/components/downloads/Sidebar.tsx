@@ -62,10 +62,10 @@ export function Sidebar({ filter, onFilterChange, counts, totalDownBps, totalUpB
       {/* Logo */}
       <div className="px-5 pt-5 pb-3 flex items-center gap-2.5">
         <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center"
-          style={{ background: "var(--gradient-primary)", boxShadow: "var(--shadow-glow)" }}
+          className="w-8 h-8 rounded-lg flex items-center justify-center bg-[#1c1c24] border border-white/5"
+          style={{ boxShadow: "0 0 15px -5px rgba(79, 70, 229, 0.3)" }}
         >
-          <FluxLogo className="w-4 h-4 text-primary-foreground" />
+          <FluxLogo className="w-4 h-4" />
         </div>
         <div className="text-[16px] font-semibold tracking-wide">
           Flux<span className="text-primary font-light">DL</span>
