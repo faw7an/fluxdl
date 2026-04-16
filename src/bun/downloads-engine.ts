@@ -3,6 +3,7 @@ import { join, dirname } from "node:path";
 import { mkdir, unlink, readdir, rmdir } from "node:fs/promises";
 import { fileTypeFromFile } from "file-type";
 import { DBManager } from "./db";
+import { logger } from "./logger";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import type { Download, DownloadStatus, FileKind } from "../mainview/lib/downloads-data";
@@ -106,6 +107,8 @@ class DownloadsEngine {
 			source: this.extractHost(url),
 		};
 
+		logger.info(`Queued download: ${url}`, "Engine");
+
 		this.queue.set(id, download);
 		this.db.insertDownload(download);
 		this.pQueue.add(() => this.downloadFile(id));
@@ -115,6 +118,8 @@ class DownloadsEngine {
 	pause(id: string): boolean {
 		const d = this.queue.get(id);
 		if (!d || d.status !== "downloading") return false;
+
+		logger.info(`User paused download`, `Engine:${id.substring(0,6)}`);
 
 		this.controllers.get(id)?.abort("paused");
 		this.controllers.delete(id);
@@ -136,6 +141,8 @@ class DownloadsEngine {
 	resume(id: string): boolean {
 		const d = this.queue.get(id);
 		if (!d || (d.status !== "paused" && d.status !== "error")) return false;
+
+		logger.info(`User resumed download`, `Engine:${id.substring(0,6)}`);
 
 		this.updateStatus(id, { status: "queued", speedBps: 0, activeSegments: 0 });
 		this.pQueue.add(() => this.downloadFile(id));
@@ -174,6 +181,8 @@ class DownloadsEngine {
 	private async downloadFile(id: string): Promise<void> {
 		const d = this.queue.get(id);
 		if (!d || d.status === "done" || d.status === "downloading") return;
+
+		logger.debug(`Pre-flight HEAD request started for ${d.url}`, `Engine:${id.substring(0,6)}`);
 
 		const controller = new AbortController();
 		this.controllers.set(id, controller);
@@ -257,7 +266,11 @@ class DownloadsEngine {
 
 					worker.onmessage = (event) => {
 						const msg = event.data;
-						if (msg.type === "progress") {
+						if (msg.type === "log") {
+							if (msg.level === "error") logger.error(msg.message, `Engine:${id.substring(0,6)}`);
+							else if (msg.level === "warn") logger.warn(msg.message, `Engine:${id.substring(0,6)}`);
+							else logger.info(msg.message, `Engine:${id.substring(0,6)}`);
+						} else if (msg.type === "progress") {
 							partsProgress.set(index, msg.downloadedBytes);
 						} else if (msg.type === "completed") {
 							activeWorkers.delete(index);
@@ -361,9 +374,9 @@ class DownloadsEngine {
 						hash.update(chunk);
 					}
 					
-					console.log(`[Checksum] ${d.name} -> SHA256: ${hash.digest("hex")}`);
+					logger.info(`[Checksum] ${d.name} -> SHA256: ${hash.digest("hex")}`, `Engine:${id.substring(0,6)}`);
 				} catch (e) {
-					console.error("Checksum generation failed:", e);
+					logger.error("Checksum generation failed", `Engine:${id.substring(0,6)}`, e);
 				}
 			}
 
@@ -388,6 +401,7 @@ class DownloadsEngine {
 			if (err instanceof Error && err.name === "AbortError" || String(err).includes("paused")) return;
 
 			const msg = err instanceof Error ? err.message : String(err);
+			logger.error(`Download failed critically`, `Engine:${id.substring(0,6)}`, err);
 			this.updateStatus(id, {
 				status: "error",
 				speedBps: 0,
@@ -429,6 +443,39 @@ class DownloadsEngine {
 		this.db.updateSetting(key, value);
 		if (key === "max_concurrent_downloads") {
 			this.updateMaxConcurrency(parseInt(value) || 3);
+		}
+	}
+
+	public async fetchUrlInfo(url: string): Promise<{ name: string; sizeBytes: number; acceptRanges: boolean; error?: string }> {
+		try {
+			logger.info(`Pre-flight fetch info for: ${url}`, "Engine");
+			
+			// Use standard URL resolution where possible
+			let headRes = await fetch(url, { method: "HEAD" });
+			if (!headRes.ok) {
+				headRes = await fetch(url, { method: "GET", headers: { "Range": "bytes=0-0" } });
+			}
+			if (!headRes.ok) {
+				return { name: this.extractFilename(url), sizeBytes: 0, acceptRanges: false, error: `HTTP ${headRes.status}` };
+			}
+
+			const contentLength = headRes.headers.get("content-length");
+			const acceptRanges = headRes.headers.get("accept-ranges") === "bytes" || headRes.status === 206;
+			let sizeBytes = contentLength ? parseInt(contentLength) : 0;
+
+			// Check content-disposition for filename
+			let name = "";
+			const disposition = headRes.headers.get("content-disposition");
+			if (disposition && disposition.includes("filename=")) {
+				const match = disposition.match(/filename="?([^"]+)"?/);
+				if (match) name = match[1];
+			}
+			if (!name) name = this.extractFilename(url);
+
+			return { name, sizeBytes, acceptRanges };
+		} catch (e) {
+			logger.error(`fetchUrlInfo failed for ${url}`, "Engine", e);
+			return { name: this.extractFilename(url), sizeBytes: 0, acceptRanges: false, error: String(e) };
 		}
 	}
 }

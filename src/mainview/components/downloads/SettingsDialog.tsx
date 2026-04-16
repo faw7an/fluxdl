@@ -61,6 +61,24 @@ export function SettingsDialog({ open, onOpenChange, getRPC }: Props) {
 		}
 	};
 
+	const exportLogs = async () => {
+		const rpc = getRPC();
+		if (!rpc) return;
+		try {
+			const logs = await rpc.request.exportLogs({});
+			const blob = new Blob([logs], { type: "text/plain" });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement("a");
+			a.href = url;
+			a.download = "fluxdl-diagnostics.log";
+			a.click();
+			URL.revokeObjectURL(url);
+			toast.success("Logs exported successfully.");
+		} catch (error) {
+			toast.error("Failed to export logs.");
+		}
+	};
+
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="sm:max-w-[425px] bg-surface-1 border border-border text-foreground">
@@ -120,13 +138,18 @@ export function SettingsDialog({ open, onOpenChange, getRPC }: Props) {
 					</div>
 				)}
 
-				<DialogFooter>
-					<Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="h-8 text-[12px] bg-surface-2 border-border hover:bg-surface-3 hover:text-foreground">
-						Cancel
+				<DialogFooter className="flex justify-between items-center sm:justify-between w-full">
+					<Button type="button" variant="outline" onClick={exportLogs} className="h-8 text-[12px] bg-surface-2 border-border hover:bg-surface-3">
+						Export Diagnostics
 					</Button>
-					<Button type="submit" onClick={handleSave} className="h-8 text-[12px] bg-primary text-primary-foreground hover:bg-primary-strong">
-						Save changes
-					</Button>
+					<div className="flex gap-2">
+						<Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="h-8 text-[12px] bg-surface-2 border-border hover:bg-surface-3 hover:text-foreground">
+							Cancel
+						</Button>
+						<Button type="submit" onClick={handleSave} className="h-8 text-[12px] bg-primary text-primary-foreground hover:bg-primary-strong">
+							Save changes
+						</Button>
+					</div>
 				</DialogFooter>
 			</DialogContent>
 		</Dialog>

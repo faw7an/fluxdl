@@ -11,6 +11,10 @@ export interface WorkerLaunchData {
 	savePath: string; // The .part.N file
 }
 
+function log(level: "info" | "warn" | "error", message: string, segmentIndex: number) {
+	postMessage({ type: "log", level, message: `[Worker ${segmentIndex}] ${message}` });
+}
+
 self.onmessage = async (event: MessageEvent) => {
 	const data = event.data as WorkerLaunchData | { type: "abort" };
 
@@ -39,6 +43,7 @@ self.onmessage = async (event: MessageEvent) => {
 		}
 
 		if (currentStart > endByte) {
+			log("info", "Already downloaded this chunk completely.", segmentIndex);
 			// Already downloaded this chunk
 			postMessage({ type: "progress", segmentIndex, downloadedBytes: downloaded, speedBps: 0 });
 			postMessage({ type: "completed", segmentIndex });
@@ -52,10 +57,16 @@ self.onmessage = async (event: MessageEvent) => {
 		const res = await fetch(url, { headers });
 
 		if (!res.ok && res.status !== 206) {
+			log("error", `HTTP ${res.status} ${res.statusText}`, segmentIndex);
 			throw new Error(`HTTP ${res.status} ${res.statusText}`);
 		}
 
-		if (!res.body) throw new Error("No response body");
+		if (!res.body) {
+			log("error", "No response body received", segmentIndex);
+			throw new Error("No response body");
+		}
+
+		log("info", `Starting fetch for range ${currentStart}-${endByte}`, segmentIndex);
 
 		const writer = file.writer();
 		const reader = res.body.getReader();
@@ -100,6 +111,7 @@ self.onmessage = async (event: MessageEvent) => {
 
 	} catch (err) {
 		const errorMessage = err instanceof Error ? err.message : String(err);
+		log("error", `Segment fetch failed: ${errorMessage}`, segmentIndex ?? "unknown");
 		postMessage({ type: "error", segmentIndex, error: errorMessage });
 	}
 };

@@ -16,6 +16,9 @@ export type AppRPC = {
 			removeDownload: { params: { id: string }; response: boolean };
 			getSettings: { params: Record<string, never>; response: Record<string, string> };
 			updateSetting: { params: { key: string; value: string }; response: boolean };
+			logMessage: { params: { level: "info" | "warn" | "error"; message: string; context?: string }; response: boolean };
+			exportLogs: { params: Record<string, never>; response: string };
+			fetchUrlInfo: { params: { url: string }; response: { name: string; sizeBytes: number; acceptRanges: boolean; error?: string } };
 		};
 		messages: {
 			downloadProgress: {

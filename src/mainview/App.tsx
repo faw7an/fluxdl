@@ -9,21 +9,7 @@ import { AddUrlModal } from "@/components/downloads/AddUrlDialog";
 import { type Download, formatBytes } from "@/lib/downloads-data";
 import { cn } from "@/lib/utils";
 
-import { type AppRPC } from "@/shared/rpc";
-
-// ── RPC helpers ──────────────────────────────────────────────────────────────
-interface ElectrobunWindow extends Window {
-	electrobun?: {
-		rpc: {
-			request: AppRPC["bun"]["requests"];
-			onMessage: (handler: (name: keyof AppRPC["bun"]["messages"] | string, payload: any) => void) => () => void;
-		};
-	};
-}
-
-function getRPC() {
-	return (window as unknown as ElectrobunWindow).electrobun?.rpc;
-}
+import { getRPC } from "@/lib/rpc-helper";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const SUB_TABS = ["all", "downloading", "paused", "queued", "done"] as const;

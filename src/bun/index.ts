@@ -1,6 +1,13 @@
 import { BrowserWindow, BrowserView, Updater } from "electrobun/bun";
 import { DownloadsEngine } from "./downloads-engine";
+import { logger } from "./logger";
+import { join } from "node:path";
+import process from "node:process";
 import type { AppRPC } from "../shared/rpc";
+
+process.on("uncaughtException", (err) => {
+	logger.error("Uncaught Exception", "System", err);
+});
 
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
@@ -43,6 +50,26 @@ const myWebviewRPC = BrowserView.defineRPC<AppRPC>({
 			updateSetting: async (params: { key: string; value: string }) => {
 				engine.updateSetting(params.key, params.value);
 				return true;
+			},
+
+			logMessage: async ({ level, message, context }) => {
+				const logCtx = context || "UI";
+				if (level === "error") logger.error(message, logCtx);
+				else if (level === "warn") logger.warn(message, logCtx);
+				else logger.info(message, logCtx);
+				return true;
+			},
+
+			exportLogs: async () => {
+				const home = process.env.HOME ?? "/tmp";
+				const logFile = join(home, ".config", "FluxDL", "logs", "app.log");
+				const file = Bun.file(logFile);
+				if (!(await file.exists())) return "No logs found.";
+				return await file.text();
+			},
+
+			fetchUrlInfo: async (params: { url: string }) => {
+				return engine.fetchUrlInfo(params.url);
 			},
 		},
 		messages: {},
