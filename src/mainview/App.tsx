@@ -5,6 +5,7 @@ import { Sidebar, type FilterKey } from "@/components/downloads/Sidebar";
 import { DownloadRow } from "@/components/downloads/DownloadRow";
 import { DetailPanel } from "@/components/downloads/DetailPanel";
 import { SettingsDialog } from "@/components/downloads/SettingsDialog";
+import { AddUrlDialog } from "@/components/downloads/AddUrlDialog";
 import { type Download, formatBytes } from "@/lib/downloads-data";
 import { cn } from "@/lib/utils";
 
