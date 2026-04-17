@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pause, Play, Plus, Search, Trash2, Settings } from "lucide-react";
+import { Pause, Play, Plus, Search, Trash2, Settings, DownloadCloud } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { Sidebar } from "@/components/downloads/Sidebar";
 import { DownloadRow } from "@/components/downloads/DownloadRow";
@@ -10,6 +10,7 @@ import { formatBytes } from "@/lib/downloads-data";
 import { cn } from "@/lib/utils";
 import { useDownloadStore } from "@/store/downloads";
 import { useClipboardCapture } from "@/hooks/use-clipboard";
+import { getRPC } from "@/lib/rpc-helper";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const SUB_TABS = ["all", "downloading", "paused", "queued", "done"] as const;
@@ -41,6 +42,79 @@ function App() {
 	const [addOpen, setAddOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [clipboardUrl, setClipboardUrl] = useState("");
+	const [isDragging, setIsDragging] = useState(false);
+
+	// ── OS Wake Lock trigger ────────────────────────────────────────────────
+	useEffect(() => {
+		const activeCount = downloads.filter((d) => d.status === "downloading").length;
+		const rpc = getRPC();
+		if (rpc) {
+			rpc.request.setWakeLock({ active: activeCount > 0 });
+		}
+	}, [downloads]);
+
+	// ── Drag and Drop Logic ─────────────────────────────────────────────────
+	useEffect(() => {
+		const handleDragOver = (e: DragEvent) => {
+			e.preventDefault();
+			setIsDragging(true);
+		};
+
+		const handleDragLeave = (e: DragEvent) => {
+			e.preventDefault();
+			if (e.relatedTarget === null || (e.relatedTarget as HTMLElement).nodeName === "HTML") {
+				setIsDragging(false);
+			}
+		};
+
+		const handleDrop = async (e: DragEvent) => {
+			e.preventDefault();
+			setIsDragging(false);
+
+			const dt = e.dataTransfer;
+			if (!dt) return;
+
+			if (dt.files && dt.files.length > 0) {
+				const file = dt.files[0];
+				if (file.name.endsWith(".txt")) {
+					try {
+						const text = await file.text();
+						const urls = text.split("\n")
+							.map(l => l.trim())
+							.filter(l => /^https?:\/\//.test(l));
+
+						if (urls.length > 0) {
+							urls.forEach(u => addDownload({ url: u, category: "Software", segments: 8 }));
+							toast.success(`Bulk imported ${urls.length} links!`);
+						} else {
+							toast.error("No valid HTTP/HTTPS URLs found in file.");
+						}
+					} catch (err) {
+						toast.error("Failed to parse the dropped file.");
+					}
+				} else {
+					toast.error("Only .txt files are supported for bulk imports.");
+				}
+				return;
+			}
+
+			const textData = dt.getData("text/plain");
+			if (textData && /^https?:\/\//.test(textData.trim())) {
+				setClipboardUrl(textData.trim());
+				setAddOpen(true);
+			}
+		};
+
+		window.addEventListener("dragover", handleDragOver);
+		window.addEventListener("dragleave", handleDragLeave);
+		window.addEventListener("drop", handleDrop);
+
+		return () => {
+			window.removeEventListener("dragover", handleDragOver);
+			window.removeEventListener("dragleave", handleDragLeave);
+			window.removeEventListener("drop", handleDrop);
+		};
+	}, [addDownload]);
 
 	// ── Clipboard auto-capture hook ─────────────────────────────────────────────
 	useClipboardCapture((url) => {
@@ -303,6 +377,20 @@ function App() {
 			</main>
 
 			<DetailPanel />
+
+			{isDragging && (
+				<div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200">
+					<div className="w-full h-full border-2 border-dashed border-primary rounded-2xl flex flex-col items-center justify-center bg-primary/5 text-primary pointer-events-none">
+						<div className="w-20 h-20 bg-primary/20 rounded-full flex items-center justify-center mb-4 pulse-dot">
+							<DownloadCloud className="w-10 h-10" />
+						</div>
+						<h2 className="text-2xl font-bold tracking-tight">Drop files or links here</h2>
+						<p className="text-muted-foreground-2 mt-2">
+							Drop a <strong>.txt</strong> file to bulk-import, or drop a URL to add it to the queue.
+						</p>
+					</div>
+				</div>
+			)}
 
 			<AddUrlModal 
 				open={addOpen} 

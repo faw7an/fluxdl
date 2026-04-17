@@ -3,7 +3,26 @@ import { DownloadsEngine } from "./downloads-engine";
 import { logger } from "./logger";
 import { join } from "node:path";
 import process from "node:process";
+import { dlopen, FFIType } from "bun:ffi";
 import type { AppRPC } from "../shared/rpc";
+
+// ── Native OS Wake Lock Setup ───────────────────────────────────────────
+let win32WakeLock: any = null;
+let wakeLockProc: import("bun").Subprocess | null = null;
+
+if (process.platform === "win32") {
+	try {
+		const lib = dlopen("kernel32.dll", {
+			SetThreadExecutionState: {
+				args: [FFIType.u32],
+				returns: FFIType.u32,
+			},
+		});
+		win32WakeLock = lib.symbols.SetThreadExecutionState;
+	} catch (e) {
+		logger.warn("Could not bind Windows power management FFI", "System");
+	}
+}
 
 process.on("uncaughtException", (err) => {
 	logger.error("Uncaught Exception", "System", err);
@@ -109,6 +128,36 @@ const myWebviewRPC = BrowserView.defineRPC<AppRPC>({
 			toggleDevTools: async () => {
 				if (mainWindow) mainWindow.webview?.toggleDevTools();
 				return true;
+			},
+			setWakeLock: async ({ active }) => {
+				try {
+					if (active) {
+						if (process.platform === "win32" && win32WakeLock) {
+							// ES_CONTINUOUS (0x80000000) | ES_SYSTEM_REQUIRED (0x00000001)
+							win32WakeLock(0x80000000 | 0x00000001);
+						} else if (process.platform === "darwin" && !wakeLockProc) {
+							// Caffeinate: -s prevents system sleep
+							wakeLockProc = Bun.spawn(["caffeinate", "-s"]);
+						} else if (process.platform === "linux" && !wakeLockProc) {
+							// Systemd standard power blocker
+							wakeLockProc = Bun.spawn(["systemd-inhibit", "--what=idle:sleep", "--why=FluxDL_Downloading", "sleep", "infinity"]);
+						}
+						logger.info("OS Wake Lock ENGAGED", "System");
+					} else {
+						if (process.platform === "win32" && win32WakeLock) {
+							// Revert to ES_CONTINUOUS (Clears requirements)
+							win32WakeLock(0x80000000);
+						} else if (wakeLockProc) {
+							wakeLockProc.kill();
+							wakeLockProc = null;
+						}
+						logger.info("OS Wake Lock RELEASED", "System");
+					}
+					return true;
+				} catch (e) {
+					logger.error("Failed to toggle Wake Lock", "System", e);
+					return false;
+				}
 			},
 		},
 		messages: {},

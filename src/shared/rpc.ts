@@ -21,6 +21,7 @@ export type AppRPC = {
 			fetchUrlInfo: { params: { url: string; headers?: Record<string, string> }; response: { name: string; sizeBytes: number; acceptRanges: boolean; headers?: Record<string, string>; error?: string } };
 			revealInExplorer: { params: { path: string }; response: boolean };
 			toggleDevTools: { params: Record<string, never>; response: boolean };
+			setWakeLock: { params: { active: boolean }; response: boolean };
 		};
 		messages: {};
 	}>;
