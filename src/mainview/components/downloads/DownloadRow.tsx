@@ -1,4 +1,4 @@
-import { Pause, Play, X, FolderOpen, RotateCw } from "lucide-react";
+import { Pause, Play, X, FolderOpen, RotateCw, Copy } from "lucide-react";
 import { memo } from "react";
 import { cn } from "@/lib/utils";
 import {
@@ -8,6 +8,14 @@ import {
   formatSpeed,
 } from "@/lib/downloads-data";
 import { useDownloadStore } from "@/store/downloads";
+import { getRPC } from "@/lib/rpc-helper";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 interface Props {
   id: string;
@@ -43,15 +51,17 @@ export const DownloadRow = memo(function DownloadRow({ id }: Props) {
   const kindStyle = fileKindStyles[download.kind] || fileKindStyles.img;
 
   return (
-    <div
-      onClick={() => setSelectedId(id)}
-      className={cn(
-        "group bg-surface-1 border rounded-xl p-4 mb-2 cursor-pointer transition-all relative overflow-hidden",
-        selected
-          ? "border-primary/50 bg-surface-2"
-          : "border-border hover:border-input hover:bg-surface-2",
-      )}
-    >
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          onClick={() => setSelectedId(id)}
+          className={cn(
+            "group bg-surface-1 border rounded-xl p-4 mb-2 cursor-pointer transition-all relative overflow-hidden",
+            selected
+              ? "border-primary/50 bg-surface-2"
+              : "border-border hover:border-input hover:bg-surface-2",
+          )}
+        >
       <div className="flex items-start gap-3">
         <div
           className={cn(
@@ -123,7 +133,12 @@ export const DownloadRow = memo(function DownloadRow({ id }: Props) {
               )}
             </ActionBtn>
           ) : (
-            <ActionBtn onClick={(e) => e.stopPropagation()} label="Open folder">
+            <ActionBtn onClick={(e) => {
+              e.stopPropagation();
+              if (download.savePath) {
+                getRPC().request.revealInExplorer({ path: download.savePath });
+              }
+            }} label="Open folder">
               <FolderOpen className="w-3 h-3" />
             </ActionBtn>
           )}
@@ -188,7 +203,46 @@ export const DownloadRow = memo(function DownloadRow({ id }: Props) {
           <div className="h-full w-full bg-success-strong" />
         </div>
       )}
-    </div>
+        </div>
+      </ContextMenuTrigger>
+      
+      <ContextMenuContent className="w-48 bg-surface-1 border-border">
+        {download.status === "error" ? (
+          <ContextMenuItem className="cursor-pointer gap-2" onClick={() => toggleDownload(id)}>
+            <RotateCw className="w-4 h-4" />
+            <span>Retry</span>
+          </ContextMenuItem>
+        ) : download.status !== "done" ? (
+          <ContextMenuItem className="cursor-pointer gap-2" onClick={() => toggleDownload(id)}>
+            {download.status === "paused" || download.status === "queued" ? (
+              <Play className="w-4 h-4" />
+            ) : (
+              <Pause className="w-4 h-4" />
+            )}
+            <span>{download.status === "paused" || download.status === "queued" ? "Resume" : "Pause"}</span>
+          </ContextMenuItem>
+        ) : null}
+
+        <ContextMenuItem className="cursor-pointer gap-2" onClick={() => navigator.clipboard?.writeText(download.url)}>
+          <Copy className="w-4 h-4" />
+          <span>Copy URL</span>
+        </ContextMenuItem>
+
+        {download.status === "done" && download.savePath && (
+          <ContextMenuItem className="cursor-pointer gap-2" onClick={() => getRPC().request.revealInExplorer({ path: download.savePath! })}>
+            <FolderOpen className="w-4 h-4" />
+            <span>Show in Folder</span>
+          </ContextMenuItem>
+        )}
+
+        <ContextMenuSeparator className="bg-border" />
+        
+        <ContextMenuItem className="cursor-pointer text-destructive focus:bg-destructive/15 focus:text-destructive gap-2" onClick={() => removeDownload(id)}>
+          <X className="w-4 h-4" />
+          <span>Remove</span>
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 });
 

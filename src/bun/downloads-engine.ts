@@ -90,6 +90,17 @@ class DownloadsEngine {
 		const name = this.extractFilename(url);
 		const cat = category as Download["category"];
 
+		const customCategoriesStr = this.db.getSetting("category_dirs", "{}");
+		let customDir: string | undefined;
+		try {
+			const parsed = JSON.parse(customCategoriesStr);
+			if (parsed[cat] && typeof parsed[cat] === "string") {
+				customDir = parsed[cat];
+			}
+		} catch {}
+
+		const savePath = getSavePath(cat, name, customDir);
+
 		const download: Download = {
 			id,
 			name,
@@ -105,6 +116,7 @@ class DownloadsEngine {
 			addedAt: Date.now(),
 			source: this.extractHost(url),
 			customHeaders: headers,
+			savePath,
 		};
 
 		logger.info(`Queued download: ${url}`, "Engine");
@@ -211,7 +223,7 @@ class DownloadsEngine {
 			}
 		} catch {}
 
-		const savePath = getSavePath(d.category, d.name, customDir);
+		const savePath = d.savePath || getSavePath(d.category, d.name, customDir);
 		const fluxdlPath = savePath + ".fluxdl";
 		const statePath = savePath + ".fluxdl.state";
 
@@ -540,7 +552,13 @@ class DownloadsEngine {
 			const enableNotifications = this.db.getSetting("os_notifications", "true") === "true";
 			if (enableNotifications) {
 				try {
-					Bun.$`notify-send "FluxDL Download Complete" "Successfully downloaded ${d.name}" --icon=emblem-downloads`.quiet();
+					if (process.platform === "darwin") {
+						Bun.$`osascript -e 'display notification "Successfully downloaded ${d.name}" with title "FluxDL"'`.quiet();
+					} else if (process.platform === "win32") {
+						Bun.$`powershell -Command "Add-Type -AssemblyName System.Windows.Forms; $notify = New-Object System.Windows.Forms.NotifyIcon; $notify.Icon = [System.Drawing.SystemIcons]::Information; $notify.Visible = $true; $notify.ShowBalloonTip(0, 'FluxDL', 'Successfully downloaded ${d.name}', [System.Windows.Forms.ToolTipIcon]::None)"`.quiet();
+					} else {
+						Bun.$`notify-send "FluxDL Download Complete" "Successfully downloaded ${d.name}" --icon=emblem-downloads`.quiet();
+					}
 				} catch (e) { }
 			}
 

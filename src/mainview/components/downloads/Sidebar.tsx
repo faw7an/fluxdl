@@ -46,11 +46,12 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   };
 
   const totalDownBps = downloads.reduce((s, d) => s + (d.status === "downloading" ? d.speedBps : 0), 0);
-  const totalUpBps = totalDownBps * 0.04;
+  const totalConnections = downloads.reduce((s, d) => s + (d.status === "downloading" ? d.activeSegments : 0), 0);
 
   const maxBps = 30 * 1024 * 1024;
+  const maxConn = 64;
   const downPct = Math.min(100, (totalDownBps / maxBps) * 100);
-  const upPct = Math.min(100, (totalUpBps / maxBps) * 100);
+  const connPct = Math.min(100, (totalConnections / maxConn) * 100);
 
   return (
     <aside className="w-[230px] min-w-[230px] bg-surface-1 border-r border-border flex flex-col">
@@ -119,14 +120,14 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
 
       <div className="mt-auto p-3 border-t border-border space-y-3">
         <div className="bg-surface-2 border border-border rounded-lg p-3.5">
-          <SpeedRow
+          <MetricRow
             label="Download"
             value={formatSpeed(totalDownBps)}
             color="success"
             pct={downPct}
           />
           <div className="h-2" />
-          <SpeedRow label="Upload" value={formatSpeed(totalUpBps)} color="primary" pct={upPct} />
+          <MetricRow label="Connections" value={totalConnections.toString()} color="primary" pct={connPct} />
         </div>
         <button 
           onClick={onOpenSettings}
@@ -148,7 +149,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function SpeedRow({
+function MetricRow({
   label,
   value,
   color,

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -25,9 +25,11 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onAdd: (data: { url: string; category: string; segments: number; headers?: Record<string, string> }) => void;
+  initialUrl?: string;
+  onClearInitialUrl?: () => void;
 }
 
-export function AddUrlModal({ open, onOpenChange, onAdd }: Props) {
+export function AddUrlModal({ open, onOpenChange, onAdd, initialUrl, onClearInitialUrl }: Props) {
   const [step, setStep] = useState<1 | 2>(1);
   const [url, setUrl] = useState("");
   const [category, setCategory] = useState("Software");
@@ -37,6 +39,24 @@ export function AddUrlModal({ open, onOpenChange, onAdd }: Props) {
   const [metadata, setMetadata] = useState<{ name: string; sizeBytes: number; acceptRanges: boolean; headers?: Record<string, string>; error?: string } | null>(null);
   const [headerRaw, setHeaderRaw] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Reset state and handle auto-fetch when opened with a clipboard URL
+  useEffect(() => {
+    if (open) {
+      setUrl(initialUrl || "");
+      setStep(1);
+      setMetadata(null);
+      setHeaderRaw("");
+      setShowAdvanced(false);
+
+      if (initialUrl) {
+        // Slight delay allows the modal animation to run smoothly before locking the thread for the RPC call
+        setTimeout(() => handleNext(initialUrl), 300);
+      }
+    } else {
+      if (onClearInitialUrl) onClearInitialUrl();
+    }
+  }, [open, initialUrl]);
 
   const parseHeaders = (raw: string): Record<string, string> | undefined => {
     if (!raw.trim()) return undefined;
@@ -52,15 +72,16 @@ export function AddUrlModal({ open, onOpenChange, onAdd }: Props) {
     }
     return Object.keys(headers).length > 0 ? headers : undefined;
   };
-  const handleNext = async () => {
-    if (!url.trim()) return;
+  const handleNext = async (targetUrl?: string) => {
+    const fetchUrl = typeof targetUrl === "string" ? targetUrl : url;
+    if (!fetchUrl.trim()) return;
     setLoading(true);
     try {
       const rpc = getRPC();
       if (!rpc) throw new Error("Backend not connected");
 
       const customHeaders = parseHeaders(headerRaw);
-      const info = await rpc.request.fetchUrlInfo({ url: url.trim(), headers: customHeaders });
+      const info = await rpc.request.fetchUrlInfo({ url: fetchUrl.trim(), headers: customHeaders });
       if (info.error) {
         uiLogger.warn(`Pre-flight check returned error: ${info.error}`, "AddUrl");
       }
@@ -70,11 +91,20 @@ export function AddUrlModal({ open, onOpenChange, onAdd }: Props) {
       if (!info.acceptRanges || info.sizeBytes === 0) {
         setSegments("1");
       }
+
+      // Auto-categorize based on file extension
+      const ext = info.name.split(".").pop()?.toLowerCase();
+      if (["mp4", "mkv", "avi", "webm"].includes(ext || "")) setCategory("Video");
+      else if (["mp3", "flac", "wav"].includes(ext || "")) setCategory("Audio");
+      else if (["zip", "rar", "7z", "tar", "gz"].includes(ext || "")) setCategory("Archives");
+      else if (["pdf", "epub", "doc"].includes(ext || "")) setCategory("Documents");
+      else setCategory("Software");
+
       setStep(2);
     } catch (e) {
       uiLogger.error("Failed to fetch preflight info", "AddUrl", e as Error);
       // Proceed gracefully even if backend fetch fails
-      setMetadata({ name: url.split("/").pop() || "download.bin", sizeBytes: 0, acceptRanges: false, error: "Failed to verify source" });
+      setMetadata({ name: fetchUrl.split("/").pop() || "download.bin", sizeBytes: 0, acceptRanges: false, error: "Failed to verify source" });
       setSegments("1");
       setStep(2);
     } finally {

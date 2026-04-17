@@ -7,6 +7,9 @@ export default {
 		version: "1.0.13",
 	},
 	build: {
+		runtime: {
+			exitOnLastWindowClosed: false,
+		},
 		bun: {
 			entrypoint: "src/bun/index.ts",
 		},

@@ -17,6 +17,7 @@ export interface Download {
   source: string; // host
   customHeaders?: Record<string, string>;
   serverHeaders?: Record<string, string>;
+  savePath?: string;
   checksum?: string;
   error?: string;
 }

@@ -8,6 +8,7 @@ import {
   formatSpeed,
 } from "@/lib/downloads-data";
 import { useDownloadStore } from "@/store/downloads";
+import { getRPC } from "@/lib/rpc-helper";
 
 export function DetailPanel() {
   const selectedId = useDownloadStore(state => state.selectedId);
@@ -134,7 +135,15 @@ export function DetailPanel() {
       <div className="p-4 border-t border-border space-y-2">
         <div className="flex gap-2">
           {download.status === "done" ? (
-            <DetailBtn icon={<FolderOpen className="w-3.5 h-3.5" />} primary>
+            <DetailBtn 
+              icon={<FolderOpen className="w-3.5 h-3.5" />} 
+              primary
+              onClick={() => {
+                if (download.savePath) {
+                  getRPC().request.revealInExplorer({ path: download.savePath });
+                }
+              }}
+            >
               Open Folder
             </DetailBtn>
           ) : download.status === "error" ? (

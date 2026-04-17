@@ -19,6 +19,7 @@ export type AppRPC = {
 			logMessage: { params: { level: "info" | "warn" | "error"; message: string; context?: string }; response: boolean };
 			exportLogs: { params: Record<string, never>; response: string };
 			fetchUrlInfo: { params: { url: string; headers?: Record<string, string> }; response: { name: string; sizeBytes: number; acceptRanges: boolean; headers?: Record<string, string>; error?: string } };
+			revealInExplorer: { params: { path: string }; response: boolean };
 			toggleDevTools: { params: Record<string, never>; response: boolean };
 		};
 		messages: {};

@@ -40,9 +40,14 @@ export class DBManager {
 				source TEXT,
 				customHeaders TEXT,
 				serverHeaders TEXT,
+				savePath TEXT,
 				error TEXT
 			);
 		`);
+
+		try {
+			this.db.exec(`ALTER TABLE downloads ADD COLUMN savePath TEXT;`);
+		} catch (e) {}
 
 		this.db.exec(`
 			CREATE TABLE IF NOT EXISTS settings (
@@ -73,14 +78,15 @@ export class DBManager {
 			source: row.source,
 			customHeaders: row.customHeaders ? JSON.parse(row.customHeaders) : undefined,
 			serverHeaders: row.serverHeaders ? JSON.parse(row.serverHeaders) : undefined,
+			savePath: row.savePath || undefined,
 			error: row.error || undefined,
 		}));
 	}
 
 	public insertDownload(d: Download) {
 		const stmt = this.db.query(`
-			INSERT OR REPLACE INTO downloads (id, name, url, kind, category, sizeBytes, downloadedBytes, speedBps, status, segments, activeSegments, addedAt, source, customHeaders, serverHeaders, error)
-			VALUES ($id, $name, $url, $kind, $category, $sizeBytes, $downloadedBytes, $speedBps, $status, $segments, $activeSegments, $addedAt, $source, $customHeaders, $serverHeaders, $error)
+			INSERT OR REPLACE INTO downloads (id, name, url, kind, category, sizeBytes, downloadedBytes, speedBps, status, segments, activeSegments, addedAt, source, customHeaders, serverHeaders, savePath, error)
+			VALUES ($id, $name, $url, $kind, $category, $sizeBytes, $downloadedBytes, $speedBps, $status, $segments, $activeSegments, $addedAt, $source, $customHeaders, $serverHeaders, $savePath, $error)
 		`);
 		stmt.run({
 			$id: d.id,
@@ -98,6 +104,7 @@ export class DBManager {
 			$source: d.source,
 			$customHeaders: d.customHeaders ? JSON.stringify(d.customHeaders) : null,
 			$serverHeaders: d.serverHeaders ? JSON.stringify(d.serverHeaders) : null,
+			$savePath: d.savePath || null,
 			$error: d.error || null,
 		});
 	}

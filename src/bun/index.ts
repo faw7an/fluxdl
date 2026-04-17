@@ -1,4 +1,4 @@
-import { BrowserWindow, BrowserView, Updater } from "electrobun/bun";
+import Electrobun, { BrowserWindow, BrowserView, Updater, Tray } from "electrobun/bun";
 import { DownloadsEngine } from "./downloads-engine";
 import { logger } from "./logger";
 import { join } from "node:path";
@@ -90,8 +90,24 @@ const myWebviewRPC = BrowserView.defineRPC<AppRPC>({
 				if (!engine) throw new Error("Engine not initialized");
 				return engine.fetchUrlInfo(params.url, params.headers);
 			},
+			revealInExplorer: async ({ path }) => {
+				try {
+					const { dirname } = require("node:path");
+					if (process.platform === "darwin") {
+						await Bun.$`open -R ${path}`;
+					} else if (process.platform === "win32") {
+						await Bun.$`explorer /select,"${path}"`;
+					} else {
+						await Bun.$`xdg-open ${dirname(path)}`;
+					}
+					return true;
+				} catch (e) {
+					logger.error("Failed to reveal file in explorer", "System", e);
+					return false;
+				}
+			},
 			toggleDevTools: async () => {
-				mainWindow.webview.toggleDevTools();
+				if (mainWindow) mainWindow.webview?.toggleDevTools();
 				return true;
 			},
 		},
@@ -100,18 +116,59 @@ const myWebviewRPC = BrowserView.defineRPC<AppRPC>({
 });
 
 // ── Window Creation ──────────────────────────────────────────────────────
-const mainWindow = new BrowserWindow({
-	title: "FluxDL",
-	url,
-	frame: {
-		width: 1280,
-		height: 780,
-		x: 200,
-		y: 200,
-	},
-	renderer: "cef",
-	
-	rpc: myWebviewRPC,
+let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+
+function showWindow() {
+	if (mainWindow) {
+		mainWindow.show();
+		mainWindow.focus();
+		return;
+	}
+
+	mainWindow = new BrowserWindow({
+		title: "FluxDL",
+		url,
+		frame: {
+			width: 1280,
+			height: 780,
+			x: 200,
+			y: 200,
+		},
+		renderer: "cef",
+		rpc: myWebviewRPC,
+	});
+}
+
+showWindow();
+
+Electrobun.events.on("close", (e: any) => {
+	if (mainWindow && e.data?.id === mainWindow.id) {
+		mainWindow = null;
+	}
+});
+
+// ── Tray Menu ─────────────────────────────────────────────────────────────
+tray = new Tray({ title: "FluxDL" });
+tray.setMenu([
+	{ type: "normal", label: "Open FluxDL", action: "open" },
+	{ type: "separator" },
+	{ type: "normal", label: "Pause All", action: "pause-all" },
+	{ type: "separator" },
+	{ type: "normal", label: "Quit", action: "quit" }
+]);
+
+tray.on("tray-clicked", (e: any) => {
+	const action = e.data?.action;
+	if (action === "open") {
+		showWindow();
+	} else if (action === "pause-all") {
+		engine.getAll().forEach(d => {
+			if (d.status === "downloading") engine.pause(d.id);
+		});
+	} else if (action === "quit") {
+		process.exit(0);
+	}
 });
 
 // ── Download engine (late init to capture mainWindow) ─────────────────────
@@ -122,16 +179,16 @@ engine = new DownloadsEngine(
 		if (tickCount++ % 10 === 0) {
 			logger.info(`Bridge: Sending progress for ${id.substring(0,6)} (${downloadedBytes} bytes)`, "RPC");
 		}
-		mainWindow.webview.rpc.send.downloadProgress({ id, downloadedBytes, speedBps, activeSegments, status });
+		if (mainWindow) mainWindow.webview?.rpc?.send.downloadProgress({ id, downloadedBytes, speedBps, activeSegments, status });
 	},
 	// onComplete
 	(id, path) => {
-		mainWindow.webview.rpc.send.downloadComplete({ id, path });
+		if (mainWindow) mainWindow.webview?.rpc?.send.downloadComplete({ id, path });
 	},
 	// onError
 	(id, error) => {
 		logger.error(`Bridge: Sending error for ${id.substring(0,6)}: ${error}`, "RPC");
-		mainWindow.webview.rpc.send.downloadError({ id, error });
+		if (mainWindow) mainWindow.webview?.rpc?.send.downloadError({ id, error });
 	},
 );
 

@@ -9,6 +9,7 @@ import { AddUrlModal } from "@/components/downloads/AddUrlDialog";
 import { formatBytes } from "@/lib/downloads-data";
 import { cn } from "@/lib/utils";
 import { useDownloadStore } from "@/store/downloads";
+import { useClipboardCapture } from "@/hooks/use-clipboard";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const SUB_TABS = ["all", "downloading", "paused", "queued", "done"] as const;
@@ -39,6 +40,13 @@ function App() {
 	const [subTab, setSubTab] = useState<SubTab>("all");
 	const [addOpen, setAddOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [clipboardUrl, setClipboardUrl] = useState("");
+
+	// ── Clipboard auto-capture hook ─────────────────────────────────────────────
+	useClipboardCapture((url) => {
+		setClipboardUrl(url);
+		setAddOpen(true);
+	});
 
 	// ── RPC sync and message handlers ───────────────────────────────────────────
 	useEffect(() => {
@@ -63,6 +71,19 @@ function App() {
 					actualRpc.request.toggleDevTools({});
 				}
 				return;
+			}
+
+			// New: Global Paste Shortcut (Ctrl+V / Cmd+V)
+			if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+				// Only trigger if they aren't actively typing in the search bar or settings
+				if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+				
+				navigator.clipboard.readText().then((text) => {
+					if (text && /^https?:\/\//.test(text.trim())) {
+						setClipboardUrl(text.trim());
+						setAddOpen(true);
+					}
+				}).catch(() => {});
 			}
 
 			if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
@@ -258,7 +279,13 @@ function App() {
 
 			<DetailPanel />
 
-			<AddUrlModal open={addOpen} onOpenChange={setAddOpen} onAdd={addDownload} />
+			<AddUrlModal 
+				open={addOpen} 
+				onOpenChange={setAddOpen} 
+				onAdd={addDownload} 
+				initialUrl={clipboardUrl}
+				onClearInitialUrl={() => setClipboardUrl("")}
+			/>
 			<SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 			<Toaster
 				position="bottom-right"
