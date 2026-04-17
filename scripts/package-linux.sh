@@ -3,7 +3,7 @@ set -e
 
 # Configuration
 APP_NAME="FluxDL"
-VERSION="1.0.7"
+VERSION=$(grep '"version":' package.json | cut -d '"' -f 4)
 PKG_DIR="pkg_staging"
 ARTIFACTS_DIR="artifacts"
 BUILD_ROOT="build"
@@ -40,6 +40,13 @@ mkdir -p $ARTIFACTS_DIR
 
 # 3. Generate .deb
 echo "🛠️ Generating .deb package..."
+
+# Create a temporary after-install script
+cat > deb-after-install.sh <<EOF
+#!/bin/bash
+chmod +x /opt/fluxdl/bin/FluxDL
+EOF
+
 fpm -s dir -t deb \
     -n fluxdl \
     -v $VERSION \
@@ -49,9 +56,9 @@ fpm -s dir -t deb \
     --maintainer "FluxDL Team" \
     --category utility \
     --vendor "FluxDL" \
-    --after-install - <<EOF
-chmod +x /opt/fluxdl/bin/FluxDL
-EOF
+    --after-install deb-after-install.sh
+
+rm deb-after-install.sh
 
 # 4. Generate .rpm
 echo "🛠️ Generating .rpm package..."
