@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
+import { getRPC } from "@/lib/rpc-helper";
 
 export function useClipboardCapture(onCapture: (url: string) => void) {
   const lastCaptured = useRef<string>("");
@@ -7,7 +8,10 @@ export function useClipboardCapture(onCapture: (url: string) => void) {
   useEffect(() => {
     const handleFocus = async () => {
       try {
-        const text = await navigator.clipboard.readText();
+        const rpc = getRPC();
+        if (!rpc) return;
+
+        const text = await rpc.request.readClipboard({});
         if (!text) return;
         
         const url = text.trim();
@@ -45,9 +49,8 @@ export function useClipboardCapture(onCapture: (url: string) => void) {
           onCapture(url);
         }
 
-      } catch (err) {
+      } catch {
         // Silently fail if clipboard permissions are denied by the OS/Webview
-        console.debug("Clipboard read failed:", err);
       }
     };
 

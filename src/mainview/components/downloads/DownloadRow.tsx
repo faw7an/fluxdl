@@ -38,7 +38,7 @@ const statusLabels: Record<string, string> = {
 };
 
 export const DownloadRow = memo(function DownloadRow({ id }: Props) {
-  const download = useDownloadStore(state => state.downloads.find(d => d.id === id));
+  const download = useDownloadStore((state) => state.downloadsById[id]);
   const selected = useDownloadStore(state => state.selectedId === id);
   const setSelectedId = useDownloadStore(state => state.setSelectedId);
   const toggleDownload = useDownloadStore(state => state.toggleDownload);
@@ -56,7 +56,7 @@ export const DownloadRow = memo(function DownloadRow({ id }: Props) {
         <div
           onClick={() => setSelectedId(id)}
           className={cn(
-            "group bg-surface-1 border rounded-xl p-4 mb-2 cursor-pointer transition-all relative overflow-hidden",
+            "group bg-surface-1 border rounded-xl p-3 md:p-4 mb-2 cursor-pointer transition-all relative overflow-hidden",
             selected
               ? "border-primary/50 bg-surface-2"
               : "border-border hover:border-input hover:bg-surface-2",
@@ -73,7 +73,7 @@ export const DownloadRow = memo(function DownloadRow({ id }: Props) {
         </div>
 
         <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-medium truncate">{download.name}</div>
+          <div className="text-[13px] font-medium truncate pr-6 md:pr-0">{download.name}</div>
           <div className="text-[11px] text-muted-foreground-2 truncate mt-0.5 mb-2">
             {download.url}
           </div>
@@ -92,14 +92,14 @@ export const DownloadRow = memo(function DownloadRow({ id }: Props) {
               {formatBytes(download.sizeBytes, 1)}
             </span>
             {download.status === "downloading" && (
-              <>
+              <span className="hidden sm:flex items-center gap-2 group-hover:hidden">
                 <span className="font-mono text-[11px] text-success">
                   ↓ {formatSpeed(download.speedBps)}
                 </span>
                 <span className="font-mono text-[11px] text-muted-foreground-2">
                   ETA {formatEta(remaining, download.speedBps)}
                 </span>
-              </>
+              </span>
             )}
             {download.status === "error" && download.error && (
               <span className="text-[11px] text-destructive truncate">{download.error}</span>
@@ -107,7 +107,7 @@ export const DownloadRow = memo(function DownloadRow({ id }: Props) {
           </div>
         </div>
 
-        <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex gap-1 shrink-0 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
           {download.status === "error" ? (
             <ActionBtn
               onClick={(e) => {
@@ -223,7 +223,10 @@ export const DownloadRow = memo(function DownloadRow({ id }: Props) {
           </ContextMenuItem>
         ) : null}
 
-        <ContextMenuItem className="cursor-pointer gap-2" onClick={() => navigator.clipboard?.writeText(download.url)}>
+        <ContextMenuItem
+          className="cursor-pointer gap-2"
+          onClick={() => getRPC()?.request.writeClipboard({ text: download.url })}
+        >
           <Copy className="w-4 h-4" />
           <span>Copy URL</span>
         </ContextMenuItem>

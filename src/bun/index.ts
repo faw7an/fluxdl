@@ -1,4 +1,4 @@
-import Electrobun, { BrowserWindow, BrowserView, Updater, Tray } from "electrobun/bun";
+import Electrobun, { BrowserWindow, BrowserView, Updater, Tray, Utils } from "electrobun/bun";
 import { DownloadsEngine } from "./downloads-engine";
 import { logger } from "./logger";
 import { join } from "node:path";
@@ -56,6 +56,15 @@ const myWebviewRPC = BrowserView.defineRPC<AppRPC>({
 			getDownloads: async () => {
 				if (!engine) return [];
 				return engine.getAll();
+			},
+
+			readClipboard: async () => {
+				return Utils.clipboardReadText();
+			},
+
+			writeClipboard: async ({ text }) => {
+				Utils.clipboardWriteText(text);
+				return true;
 			},
 
 			startDownload: async (params: { url: string; category: string; segments: number; headers?: Record<string, string> }) => {
@@ -221,13 +230,9 @@ tray.on("tray-clicked", (e: any) => {
 });
 
 // ── Download engine (late init to capture mainWindow) ─────────────────────
-let tickCount = 0;
 engine = new DownloadsEngine(
 	// onProgress
 	(id, downloadedBytes, speedBps, activeSegments, status) => {
-		if (tickCount++ % 10 === 0) {
-			logger.info(`Bridge: Sending progress for ${id.substring(0,6)} (${downloadedBytes} bytes)`, "RPC");
-		}
 		if (mainWindow) mainWindow.webview?.rpc?.send.downloadProgress({ id, downloadedBytes, speedBps, activeSegments, status });
 	},
 	// onComplete
@@ -236,7 +241,6 @@ engine = new DownloadsEngine(
 	},
 	// onError
 	(id, error) => {
-		logger.error(`Bridge: Sending error for ${id.substring(0,6)}: ${error}`, "RPC");
 		if (mainWindow) mainWindow.webview?.rpc?.send.downloadError({ id, error });
 	},
 );

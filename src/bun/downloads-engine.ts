@@ -1,5 +1,5 @@
 import PQueue from "p-queue";
-import { join, dirname } from "node:path";
+import { join, dirname, isAbsolute } from "node:path";
 import { mkdir, unlink, rename, open } from "node:fs/promises";
 import { fileTypeFromFile } from "file-type";
 import { DBManager } from "./db";
@@ -40,10 +40,24 @@ function detectKindByUnknownExt(filename: string): FileKind {
 	return "img";
 }
 
-function getSavePath(category: Download["category"], filename: string, customDir?: string): string {
+function getSavePath(
+	category: Download["category"],
+	filename: string,
+	customDir: string | undefined,
+	defaultDir: string | undefined,
+): string {
 	const home = process.env.HOME ?? "/tmp";
-	const subDir = customDir || DEFAULT_CATEGORY_DIRS[category] || "Downloads";
-	return join(home, subDir, "FluxDL", filename);
+	const trimmedDefault = defaultDir?.trim();
+	const baseDir = trimmedDefault
+		? (isAbsolute(trimmedDefault) ? trimmedDefault : join(home, trimmedDefault))
+		: home;
+	const trimmedCustom = customDir?.trim();
+	if (trimmedCustom) {
+		if (isAbsolute(trimmedCustom)) return join(trimmedCustom, filename);
+		return join(baseDir, trimmedCustom, "FluxDL", filename);
+	}
+	const subDir = DEFAULT_CATEGORY_DIRS[category] || "Downloads";
+	return join(baseDir, subDir, "FluxDL", filename);
 }
 
 class DownloadsEngine {
@@ -117,6 +131,8 @@ class DownloadsEngine {
 		const id = crypto.randomUUID();
 		const name = this.extractFilename(url);
 		const cat = category as Download["category"];
+		const maxSegmentsSetting = parseInt(this.db.getSetting("max_segments_per_download", "8"), 10) || 8;
+		const effectiveSegments = Math.max(1, Math.min(segments, maxSegmentsSetting));
 
 		const customCategoriesStr = this.db.getSetting("category_dirs", "{}");
 		let customDir: string | undefined;
@@ -127,7 +143,8 @@ class DownloadsEngine {
 			}
 		} catch {}
 
-		const savePath = getSavePath(cat, name, customDir);
+		const defaultDir = this.db.getSetting("default_download_dir", "");
+		const savePath = getSavePath(cat, name, customDir, defaultDir);
 
 		const download: Download = {
 			id,
@@ -139,7 +156,7 @@ class DownloadsEngine {
 			downloadedBytes: 0,
 			speedBps: 0,
 			status: "queued",
-			segments,
+			segments: effectiveSegments,
 			activeSegments: 0,
 			addedAt: Date.now(),
 			source: this.extractHost(url),
@@ -251,7 +268,8 @@ class DownloadsEngine {
 			}
 		} catch {}
 
-		const savePath = d.savePath || getSavePath(d.category, d.name, customDir);
+		const defaultDir = this.db.getSetting("default_download_dir", "");
+		const savePath = d.savePath || getSavePath(d.category, d.name, customDir, defaultDir);
 		const fluxdlPath = savePath + ".fluxdl";
 		const statePath = savePath + ".fluxdl.state";
 
@@ -379,7 +397,6 @@ class DownloadsEngine {
 			let currentEmaSpeed = 0;
 			const EMA_ALPHA = 0.2;
 			let tickCount = 0;
-			let firstPulse = true;
 
 			const workerPromises: Promise<void>[] = [];
 
@@ -421,7 +438,7 @@ class DownloadsEngine {
 							const now = Date.now();
 							const elapsed = (now - lastTimeSweep) / 1000;
 							
-							if (elapsed >= 0.5 || firstPulse) {
+							if (elapsed >= 0.5 || tickCount === 0) {
 								totalDownloadedBytes = 0;
 								for (const bytes of partsProgress.values()) totalDownloadedBytes += bytes;
 
@@ -437,10 +454,6 @@ class DownloadsEngine {
 								lastDownloadSweep = totalDownloadedBytes;
 								lastTimeSweep = now;
 
-								if (firstPulse) {
-									logger.info(`First pulse for download ${id.substring(0,6)}`, "Engine");
-									firstPulse = false;
-								}
 
 								this.onProgress(id, totalDownloadedBytes, currentEmaSpeed, activeWorkers.size, "downloading");
 								
@@ -477,9 +490,8 @@ class DownloadsEngine {
 								}
 
 								// Minimum threshold to split: 2MB
-								if (slowestIndex !== -1 && maxRemaining > 2 * 1024 * 1024) {
-									const splitPoint = slowestCurrentStart + Math.floor(maxRemaining / 2);
-									logger.info(`Worker ${index} stealing work from Worker ${slowestIndex}. Split at ${splitPoint}`, `Engine:${id.substring(0,6)}`);
+							if (slowestIndex !== -1 && maxRemaining > 2 * 1024 * 1024) {
+								const splitPoint = slowestCurrentStart + Math.floor(maxRemaining / 2);
 									
 									// Shrink the slow worker
 									const slowWorker = activeWorkerInstances[slowestIndex];
@@ -596,6 +608,19 @@ class DownloadsEngine {
 				} catch (e) { }
 			}
 
+			const playSound = this.db.getSetting("play_sound_on_complete", "false") === "true";
+			if (playSound) {
+				try {
+					if (process.platform === "darwin") {
+						Bun.$`afplay /System/Library/Sounds/Glass.aiff`.quiet();
+					} else if (process.platform === "win32") {
+						Bun.$`powershell -Command "[console]::beep(880, 200)"`.quiet();
+					} else {
+						Bun.$`paplay /usr/share/sounds/freedesktop/stereo/complete.oga`.quiet();
+					}
+				} catch (e) { }
+			}
+
 			this.onComplete(id, savePath);
 
 		} catch (err: unknown) {
@@ -622,6 +647,18 @@ class DownloadsEngine {
 				activeSegments: 0,
 				error: msg,
 			});
+			const notifyOnError = this.db.getSetting("notify_on_error", "true") === "true";
+			if (notifyOnError) {
+				try {
+					if (process.platform === "darwin") {
+						Bun.$`osascript -e 'display notification "Download failed: ${d.name}" with title "FluxDL"'`.quiet();
+					} else if (process.platform === "win32") {
+						Bun.$`powershell -Command "Add-Type -AssemblyName System.Windows.Forms; $notify = New-Object System.Windows.Forms.NotifyIcon; $notify.Icon = [System.Drawing.SystemIcons]::Error; $notify.Visible = $true; $notify.ShowBalloonTip(0, 'FluxDL', 'Download failed: ${d.name}', [System.Windows.Forms.ToolTipIcon]::None)"`.quiet();
+					} else {
+						Bun.$`notify-send "FluxDL Download Failed" "${d.name}" --icon=dialog-error`.quiet();
+					}
+				} catch (e) { }
+			}
 			this.onError(id, msg);
 		}
 	}

@@ -49,6 +49,15 @@ export function AddUrlModal({ open, onOpenChange, onAdd, initialUrl, onClearInit
       setHeaderRaw("");
       setShowAdvanced(false);
 
+      const rpc = getRPC();
+      if (rpc) {
+        rpc.request.getSettings({}).then((settings: Record<string, string>) => {
+          if (settings["max_segments_per_download"]) {
+            setSegments(settings["max_segments_per_download"]);
+          }
+        }).catch(() => {});
+      }
+
       if (initialUrl) {
         // Slight delay allows the modal animation to run smoothly before locking the thread for the RPC call
         setTimeout(() => handleNext(initialUrl), 300);
@@ -247,7 +256,7 @@ export function AddUrlModal({ open, onOpenChange, onAdd, initialUrl, onClearInit
             <>
               <Button variant="ghost" onClick={handleClose}>Cancel</Button>
               <Button
-                onClick={handleNext}
+                onClick={() => handleNext()}
                 className="bg-primary text-primary-foreground hover:bg-primary-strong"
                 disabled={loading || !url.trim()}
               >

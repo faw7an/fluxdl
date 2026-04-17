@@ -1,5 +1,4 @@
-import { Pause, Play, X, FolderOpen, Link2, RotateCw } from "lucide-react";
-import { useMemo } from "react";
+import { Pause, Play, X, FolderOpen, Link2, RotateCw, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   fileKindStyles,
@@ -12,7 +11,7 @@ import { getRPC } from "@/lib/rpc-helper";
 
 export function DetailPanel() {
   const selectedId = useDownloadStore(state => state.selectedId);
-  const download = useDownloadStore(state => state.downloads.find(d => d.id === selectedId) || null);
+  const download = useDownloadStore((state) => (selectedId ? state.downloadsById[selectedId] : null));
   const toggleDownload = useDownloadStore(state => state.toggleDownload);
   const removeDownload = useDownloadStore(state => state.removeDownload);
 
@@ -39,7 +38,7 @@ export function DetailPanel() {
   const segDone = Math.floor((pct / 100) * download.segments);
 
   return (
-    <aside className="w-[300px] min-w-[300px] bg-surface-1 border-l border-border flex flex-col overflow-hidden">
+    <aside className="w-[300px] min-w-[300px] bg-surface-1 border-l border-border hidden lg:flex flex-col overflow-hidden">
       <div className="p-4 border-b border-border flex items-center gap-3">
         <div
           className={cn(
@@ -123,6 +122,25 @@ export function DetailPanel() {
           {download.checksum && <Row label="Checksum" value={download.checksum} mono />}
         </Section>
 
+        {download.status === "error" && download.error && (
+          <Section title="Error">
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="font-mono text-[11px] text-destructive break-words">
+                  {download.error}
+                </div>
+                <button
+                  onClick={() => getRPC()?.request.writeClipboard({ text: download.error || "" })}
+                  className="shrink-0 inline-flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-[10px] text-destructive hover:bg-destructive/15 transition-colors"
+                >
+                  <Copy className="w-3 h-3" />
+                  Copy
+                </button>
+              </div>
+            </div>
+          </Section>
+        )}
+
         {download.serverHeaders && Object.keys(download.serverHeaders).length > 0 && (
           <Section title="Network Metadata">
             {Object.entries(download.serverHeaders).map(([k, v]) => (
@@ -167,7 +185,7 @@ export function DetailPanel() {
           )}
           <DetailBtn
             icon={<Link2 className="w-3.5 h-3.5" />}
-            onClick={() => navigator.clipboard?.writeText(download.url)}
+            onClick={() => getRPC()?.request.writeClipboard({ text: download.url })}
           >
             Copy URL
           </DetailBtn>

@@ -34,19 +34,8 @@ const categories = [
   { label: "Software", icon: Package },
   { label: "Documents", icon: FileText },
 ];
-export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
-  const { downloads, filter, setFilter } = useDownloadStore();
-
-  const counts = {
-    all: downloads.length,
-    active: downloads.filter((d) => d.status === "downloading").length,
-    queued: downloads.filter((d) => d.status === "queued").length,
-    done: downloads.filter((d) => d.status === "done").length,
-    error: downloads.filter((d) => d.status === "error").length,
-  };
-
-  const totalDownBps = downloads.reduce((s, d) => s + (d.status === "downloading" ? d.speedBps : 0), 0);
-  const totalConnections = downloads.reduce((s, d) => s + (d.status === "downloading" ? d.activeSegments : 0), 0);
+export function Sidebar({ onOpenSettings, settingsActive }: { onOpenSettings: () => void; settingsActive?: boolean }) {
+  const { counts, totalDownBps, totalConnections, filter, setFilter } = useDownloadStore();
 
   const maxBps = 30 * 1024 * 1024;
   const maxConn = 64;
@@ -72,7 +61,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       <nav className="px-2">
         {navItems.map((item) => {
           const count = counts[item.key];
-          const active = filter === item.key;
+          const active = !settingsActive && filter === item.key;
           const Icon = item.icon;
           return (
             <button
@@ -131,7 +120,12 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         </div>
         <button 
           onClick={onOpenSettings}
-          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground transition-colors"
+          className={cn(
+            "w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] font-medium transition-colors",
+            settingsActive
+              ? "bg-surface-3 text-primary"
+              : "text-muted-foreground hover:bg-surface-2 hover:text-foreground",
+          )}
         >
           <Settings className="w-[15px] h-[15px]" />
           Settings

@@ -7,6 +7,8 @@ export type AppRPC = {
 	bun: RPCSchema<{
 		requests: {
 			getDownloads: { params: Record<string, never>; response: Download[] };
+			readClipboard: { params: Record<string, never>; response: string | null };
+			writeClipboard: { params: { text: string }; response: boolean };
 			startDownload: {
 				params: { url: string; category: string; segments: number; headers?: Record<string, string> };
 				response: { id: string };
