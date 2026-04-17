@@ -87,7 +87,20 @@ if command -v appimagetool >/dev/null 2>&1 || [ -f "./appimagetool" ]; then
     
     # AppImage specific requirements at root
     cp src/mainview/assets/icon-512.png $AI_ROOT/fluxdl.png
-    cp $FIND_BUILD/FluxDL.desktop $AI_ROOT/fluxdl.desktop
+    
+    # Patch the desktop file for AppImage compliance:
+    # 1. Icon name should not have an extension
+    # 2. Remove deprecated 'Application' category
+    # 3. Ensure Exec points to fluxdl (which AppRun will handle or just point to absolute in AppDir)
+    cat > $AI_ROOT/fluxdl.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=FluxDL
+Exec=FluxDL
+Icon=fluxdl
+Terminal=false
+Categories=Utility;
+EOF
     
     # AppRun is required
     cat > $AI_ROOT/AppRun <<EOF
