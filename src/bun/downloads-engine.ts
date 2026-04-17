@@ -24,8 +24,7 @@ const DEFAULT_CATEGORY_DIRS: Record<Download["category"], string> = {
 	Audio: "Music",
 	Software: "Downloads",
 	Documents: "Documents",
-	Archives: "Downloads",
-	Images: "Pictures"
+	Archives: "Downloads"
 };
 
 function detectKindByUnknownExt(filename: string): FileKind {
@@ -219,7 +218,7 @@ class DownloadsEngine {
 		try {
 			await mkdir(dirname(savePath), { recursive: true });
 
-			let savedState: { partsProgress: Record<number, number> } | null = null;
+			let savedState: { partsProgress: Record<number, number>; ranges?: {start: number, end: number}[] } | null = null;
 			try {
 				const stateFile = Bun.file(statePath);
 				if (await stateFile.exists()) {
@@ -296,15 +295,19 @@ class DownloadsEngine {
 			this.updateStatus(id, { sizeBytes: totalSize, serverHeaders });
 
 			// If server doesn't support ranges or size is unknown, force 1 segment
-			const effectiveSegments = (acceptRanges && totalSize > 0) ? numSegments : 1;
+			let effectiveSegments = (acceptRanges && totalSize > 0) ? numSegments : 1;
 
 			const ranges: { start: number; end: number }[] = [];
-			const chunkSize = effectiveSegments > 1 ? Math.floor(totalSize / effectiveSegments) : totalSize;
-
-			for (let i = 0; i < effectiveSegments; i++) {
-				const start = i * chunkSize;
-				const end = i === effectiveSegments - 1 ? (totalSize > 0 ? totalSize - 1 : -1) : start + chunkSize - 1;
-				ranges.push({ start, end });
+			if (savedState?.ranges) {
+				ranges.push(...savedState.ranges);
+				effectiveSegments = ranges.length; // Use restored segments length
+			} else {
+				const chunkSize = effectiveSegments > 1 ? Math.floor(totalSize / effectiveSegments) : totalSize;
+				for (let i = 0; i < effectiveSegments; i++) {
+					const start = i * chunkSize;
+					const end = i === effectiveSegments - 1 ? (totalSize > 0 ? totalSize - 1 : -1) : start + chunkSize - 1;
+					ranges.push({ start, end });
+				}
 			}
 
 			const partsProgress = new Map<number, number>();
@@ -338,21 +341,24 @@ class DownloadsEngine {
 			let tickCount = 0;
 			let firstPulse = true;
 
-			const workerPromises = ranges.map((range, index) => {
+			const workerPromises: Promise<void>[] = [];
+
+			const spawnWorker = (index: number, start: number, end: number, downloadedBytes: number): Promise<void> => {
 				return new Promise<void>((resolve, reject) => {
 					const workerUrl = new URL("download-worker.ts", import.meta.url).href;
 					const worker = new Worker(workerUrl);
 					
-					activeWorkerInstances.push(worker);
+					activeWorkerInstances[index] = worker;
 					activeWorkers.add(index);
+					ranges[index] = { start, end }; // keep tracking up to date
 
 					worker.postMessage({
 						url: d.url,
-						startByte: range.start,
-						endByte: range.end >= 0 ? range.end : Number.MAX_SAFE_INTEGER,
+						startByte: start,
+						endByte: end >= 0 ? end : Number.MAX_SAFE_INTEGER,
 						segmentIndex: index,
 						savePath: fluxdlPath,
-						downloaded: partsProgress.get(index) || 0,
+						downloaded: downloadedBytes,
 						headers: d.customHeaders,
 					});
 
@@ -363,7 +369,10 @@ class DownloadsEngine {
 							else if (msg.level === "warn") logger.warn(msg.message, `Engine:${id.substring(0,6)}`);
 							else logger.info(msg.message, `Engine:${id.substring(0,6)}`);
 						} else if (msg.type === "progress") {
-							partsProgress.set(index, msg.downloadedBytes);
+							const assignedRange = ranges[index];
+							const rangeLen = assignedRange.end - assignedRange.start + 1;
+							const cappedBytes = Math.min(msg.downloadedBytes, rangeLen);
+							partsProgress.set(index, cappedBytes);
 							
 							// Event-driven progress update (throttled)
 							const now = Date.now();
@@ -395,12 +404,56 @@ class DownloadsEngine {
 								tickCount++;
 								if (tickCount % 10 === 0) {
 									this.updateStatus(id, { downloadedBytes: totalDownloadedBytes, speedBps: currentEmaSpeed, activeSegments: activeWorkers.size });
-									Bun.write(statePath, JSON.stringify({ partsProgress: Object.fromEntries(partsProgress) })).catch(() => {});
+									Bun.write(statePath, JSON.stringify({ partsProgress: Object.fromEntries(partsProgress), ranges })).catch(() => {});
 								}
 							}
 						} else if (msg.type === "completed") {
 							activeWorkers.delete(index);
 							worker.terminate();
+
+							// WORK STEALING LOGIC
+							if (activeWorkers.size > 0 && effectiveSegments > 1) {
+								// Find the worker with the most remaining bytes
+								let slowestIndex = -1;
+								let maxRemaining = 0;
+								let slowestCurrentStart = 0;
+								
+								for (const actIndex of activeWorkers) {
+									const actRange = ranges[actIndex];
+									const actProgress = partsProgress.get(actIndex) || 0;
+									const actCurrentStart = actRange.start + actProgress;
+									
+									if (actRange.end > 0) {
+										const remaining = actRange.end - actCurrentStart;
+										if (remaining > maxRemaining) {
+											maxRemaining = remaining;
+											slowestIndex = actIndex;
+											slowestCurrentStart = actCurrentStart;
+										}
+									}
+								}
+
+								// Minimum threshold to split: 2MB
+								if (slowestIndex !== -1 && maxRemaining > 2 * 1024 * 1024) {
+									const splitPoint = slowestCurrentStart + Math.floor(maxRemaining / 2);
+									logger.info(`Worker ${index} stealing work from Worker ${slowestIndex}. Split at ${splitPoint}`, `Engine:${id.substring(0,6)}`);
+									
+									// Shrink the slow worker
+									const slowWorker = activeWorkerInstances[slowestIndex];
+									const oldSlowRange = ranges[slowestIndex];
+									const newSlowEnd = splitPoint - 1;
+									ranges[slowestIndex] = { start: oldSlowRange.start, end: newSlowEnd };
+									slowWorker.postMessage({ type: "shrink", newEndByte: newSlowEnd });
+									
+									// Respawn the idle worker for the back half with a NEW index
+									const newIndex = ranges.length;
+									ranges.push({ start: splitPoint, end: oldSlowRange.end });
+									workerPromises.push(spawnWorker(newIndex, splitPoint, oldSlowRange.end, 0));
+									resolve();
+									return;
+								}
+							}
+
 							resolve();
 						} else if (msg.type === "error") {
 							worker.terminate();
@@ -415,9 +468,22 @@ class DownloadsEngine {
 						reject(new Error("paused"));
 					});
 				});
-			});
+			};
 
-			await Promise.all(workerPromises);
+			for (let i = 0; i < ranges.length; i++) {
+				workerPromises.push(spawnWorker(i, ranges[i].start, ranges[i].end, partsProgress.get(i) || 0));
+			}
+
+			// We must wait for all promises, including dynamically pushed ones.
+			// Since workerPromises array mutates, a simple Promise.all is not enough.
+			const waitAllWorkers = async () => {
+				let i = 0;
+				while (i < workerPromises.length) {
+					await workerPromises[i];
+					i++;
+				}
+			};
+			await waitAllWorkers();
 
 			this.updateStatus(id, { status: "downloading", speedBps: 0, activeSegments: 0 });
 			

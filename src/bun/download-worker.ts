@@ -13,34 +13,46 @@ export interface WorkerLaunchData {
 	headers?: Record<string, string>;
 }
 
-function log(level: "info" | "warn" | "error", message: string, segmentIndex: number) {
+export type WorkerMessage = 
+	| WorkerLaunchData
+	| { type: "abort" }
+	| { type: "shrink"; newEndByte: number };
+
+function log(level: "info" | "warn" | "error", message: string, segmentIndex: number | string) {
 	postMessage({ type: "log", level, message: `[Worker ${segmentIndex}] ${message}` });
 }
 
-self.onmessage = async (event: MessageEvent) => {
-	const data = event.data as WorkerLaunchData | { type: "abort" };
+let activeEndByte = -1;
 
-	if ("type" in data && data.type === "abort") {
-		// Native worker doesn't strictly have an external abort controller 
-		// if we aren't storing the fetch controller globally. 
-		// Returning will allow the task to end normally or wait for terminate()
-		return;
+// @ts-ignore
+self.onmessage = async (event: MessageEvent) => {
+	const data = event.data as WorkerMessage;
+
+	if ("type" in data) {
+		if (data.type === "abort") {
+			return;
+		} else if (data.type === "shrink") {
+			activeEndByte = data.newEndByte;
+			log("info", `Shrunk endByte to ${activeEndByte}`, -1);
+			return;
+		}
 	}
 
 	const { url, startByte, endByte, segmentIndex, savePath, downloaded: initialDownloaded, headers: customHeaders } = data as WorkerLaunchData;
+
+	if (activeEndByte === -1) {
+		activeEndByte = endByte;
+	}
 
 	let downloaded = initialDownloaded || 0;
 	let lastEmit = Date.now();
 	let lastBytes = 0;
 
-	try {
-		await mkdir(dirname(savePath), { recursive: true });
-		let currentStart = startByte + downloaded;
-		
-		// We write directly to the shared .fluxdl file
-		const file = Bun.file(savePath);
-
-		if (currentStart > endByte) {
+		try {
+			await mkdir(dirname(savePath), { recursive: true });
+			let currentStart = startByte + downloaded;
+			
+			if (currentStart > activeEndByte) {
 			log("info", "Already downloaded this chunk completely.", segmentIndex);
 			// Already downloaded this chunk
 			postMessage({ type: "progress", segmentIndex, downloadedBytes: downloaded, speedBps: 0 });
@@ -49,7 +61,7 @@ self.onmessage = async (event: MessageEvent) => {
 		}
 
 		const headers: Record<string, string> = {
-			"Range": `bytes=${currentStart}-${endByte}`,
+			"Range": `bytes=${currentStart}-${activeEndByte}`,
 			"User-Agent": "FluxDL/1.0.7 (Electrobun; Multi-Segment Download Manager)",
 			...(customHeaders || {})
 		};
@@ -85,7 +97,7 @@ self.onmessage = async (event: MessageEvent) => {
 			throw new Error("No response body");
 		}
 
-		log("info", `Starting fetch for range ${currentStart}-${endByte}`, segmentIndex);
+		log("info", `Starting fetch for range ${currentStart}-${activeEndByte}`, segmentIndex);
 
 		const fh = await open(savePath, "r+");
 		const reader = res.body.getReader();
@@ -94,12 +106,24 @@ self.onmessage = async (event: MessageEvent) => {
 		postMessage({ type: "progress", segmentIndex, downloadedBytes: downloaded, speedBps: 0 });
 
 		while (true) {
+			if (currentStart > activeEndByte) {
+				log("info", `Reached new dynamic endByte (${activeEndByte}), exiting loop.`, segmentIndex);
+				break;
+			}
+
 			const { done, value } = await reader.read();
 			if (done) break;
 
-			await fh.write(value, 0, value.length, currentStart);
-			downloaded += value.byteLength;
-			currentStart += value.byteLength;
+			// If this chunk pushes us past the activeEndByte, slice it
+			let bytesToWrite = value;
+			const remainingBytes = (activeEndByte - currentStart) + 1;
+			if (value.byteLength > remainingBytes) {
+				bytesToWrite = value.slice(0, remainingBytes);
+			}
+
+			await fh.write(bytesToWrite, 0, bytesToWrite.length, currentStart);
+			downloaded += bytesToWrite.byteLength;
+			currentStart += bytesToWrite.byteLength;
 
 			// Optimized tracking: Only check clock every 64KB to save CPU
 			if (downloaded - lastBytes > 65536) {

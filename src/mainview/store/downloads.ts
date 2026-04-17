@@ -146,7 +146,7 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
 		const rpc = getRPC();
 		if (!rpc) return;
 		
-		rpc.request.removeDownload({ id }).then(success => {
+		rpc.request.removeDownload({ id }).then((success: boolean) => {
 			if (success) {
 				set(state => ({
 					downloads: state.downloads.filter(x => x.id !== id),
