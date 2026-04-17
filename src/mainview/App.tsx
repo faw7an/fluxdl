@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Pause, Play, Plus, Search, Trash2, Settings } from "lucide-react";
 import { Toaster, toast } from "sonner";
-import { Sidebar, type FilterKey } from "@/components/downloads/Sidebar";
+import { Sidebar } from "@/components/downloads/Sidebar";
 import { DownloadRow } from "@/components/downloads/DownloadRow";
 import { DetailPanel } from "@/components/downloads/DetailPanel";
 import { SettingsDialog } from "@/components/downloads/SettingsDialog";
 import { AddUrlModal } from "@/components/downloads/AddUrlDialog";
-import { type Download, formatBytes } from "@/lib/downloads-data";
+import { formatBytes } from "@/lib/downloads-data";
 import { cn } from "@/lib/utils";
-
-import { getRPC, waitForRPC } from "@/lib/rpc-helper";
+import { useDownloadStore } from "@/store/downloads";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const SUB_TABS = ["all", "downloading", "paused", "queued", "done"] as const;
@@ -17,163 +16,35 @@ type SubTab = (typeof SUB_TABS)[number];
 
 // ── App ───────────────────────────────────────────────────────────────────────
 function App() {
-	const [downloads, setDownloads] = useState<Download[]>([]);
-	const [filter, setFilter] = useState<FilterKey>("all");
+	const {
+		downloads,
+		filter,
+		setFilter,
+		search,
+		setSearch,
+		selectedId,
+		setSelectedId,
+		sortBy,
+		setSortBy,
+		initializeRPC,
+		fetchDownloads,
+		addDownload,
+		pauseAll,
+		resumeAll,
+		clearCompleted,
+		toggleDownload,
+		removeDownload,
+	} = useDownloadStore();
+
 	const [subTab, setSubTab] = useState<SubTab>("all");
-	const [search, setSearch] = useState("");
-	const [selectedId, setSelectedId] = useState<string>("");
 	const [addOpen, setAddOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
-	const [sortBy, setSortBy] = useState<"newest" | "oldest" | "name" | "size" | "progress">("newest");
+
 	// ── RPC sync and message handlers ───────────────────────────────────────────
 	useEffect(() => {
-		let isMounted = true;
-		let off: (() => void) | undefined;
-
-		const init = async () => {
-			const ok = await waitForRPC();
-			if (!ok || !isMounted) return;
-
-			const rpc = getRPC();
-			if (!rpc) return;
-
-			// Load initial queue
-			const list = await rpc.request.getDownloads({});
-			if (isMounted) {
-				setDownloads(list);
-				if (list.length > 0) setSelectedId(list[0].id);
-			}
-
-			// Listen to live updates
-			off = rpc.onMessage((name: any, payload: any) => {
-				const p = payload as Record<string, any>;
-
-				if (name === "downloadProgress") {
-					const { id, downloadedBytes, speedBps, activeSegments, status } = p as any;
-					setDownloads((prev) =>
-						prev.map((d) =>
-							d.id === id ? { ...d, downloadedBytes, speedBps, activeSegments, status } : d,
-						),
-					);
-				}
-
-				if (name === "downloadComplete") {
-					const { id, path } = p as any;
-					setDownloads((prev) =>
-						prev.map((d) =>
-							d.id === id
-								? { ...d, status: "done", speedBps: 0, activeSegments: 0, downloadedBytes: d.sizeBytes }
-								: d,
-						),
-					);
-					const filename = path.split("/").pop() ?? "file";
-					toast.success(`Completed: ${filename}`);
-				}
-
-				if (name === "downloadError") {
-					const { id, error } = p as any;
-					setDownloads((prev) =>
-						prev.map((d) =>
-							d.id === id
-								? { ...d, status: "error", speedBps: 0, activeSegments: 0, error }
-								: d,
-						),
-					);
-					toast.error(`Download failed: ${error}`);
-				}
-			});
-		};
-
-		init();
-
-		return () => {
-			isMounted = false;
-			if (off) off();
-		};
+		initializeRPC();
+		fetchDownloads();
 	}, []);
-
-	// ── Actions ────────────────────────────────────────────────────
-	const addDownload = ({ url, category, segments }: { url: string; category: string; segments: number }) => {
-		const rpc = getRPC();
-		if (!rpc) return;
-
-		rpc.request.startDownload({ url, category, segments }).then(({ id }) => {
-			// Optimistically add a queued entry while the engine fires progress messages
-			const name = (() => {
-				try { return decodeURIComponent(new URL(url).pathname.split("/").pop() || "download.bin"); }
-				catch { return "download.bin"; }
-			})();
-			const kind = (() => {
-				const u = url.toLowerCase();
-				if (u.endsWith(".zip")) return "zip" as const;
-				if (u.endsWith(".mp4") || u.endsWith(".mkv")) return "mp4" as const;
-				if (u.endsWith(".iso")) return "iso" as const;
-				if (u.endsWith(".tar") || u.endsWith(".gz") || u.endsWith(".xz")) return "tar" as const;
-				if (u.endsWith(".exe") || u.endsWith(".msi")) return "exe" as const;
-				if (u.endsWith(".pdf")) return "pdf" as const;
-				if (u.endsWith(".mp3") || u.endsWith(".wav")) return "mp3" as const;
-				if (u.endsWith(".deb") || u.endsWith(".rpm")) return "deb" as const;
-				return "img" as const;
-			})();
-			const host = (() => { try { return new URL(url).hostname; } catch { return "unknown"; } })();
-			const newEntry: Download = {
-				id, name, url, kind,
-				category: category as Download["category"],
-				sizeBytes: 0, downloadedBytes: 0, speedBps: 0,
-				status: "queued", segments, activeSegments: 0,
-				addedAt: Date.now(), source: host,
-			};
-			setDownloads((prev) => [newEntry, ...prev]);
-			setSelectedId(id);
-			toast.success(`Queued: ${name}`);
-		});
-	};
-
-	const toggleOne = (id: string) => {
-		const rpc = getRPC();
-		if (!rpc) return;
-		const d = downloads.find((x) => x.id === id);
-		if (!d) return;
-
-		if (d.status === "downloading") {
-			rpc.request.pauseDownload({ id });
-		} else if (d.status === "paused" || d.status === "error" || d.status === "queued") {
-			rpc.request.resumeDownload({ id });
-		}
-	};
-
-	const removeOne = (id: string) => {
-		const rpc = getRPC();
-		if (!rpc) return;
-		rpc.request.removeDownload({ id }).then((ok) => {
-			if (ok) {
-				setDownloads((prev) => prev.filter((d) => d.id !== id));
-				toast("Removed from queue");
-			}
-		});
-	};
-
-	const pauseAll = () => {
-		const rpc = getRPC();
-		if (!rpc) return;
-		const anyActive = downloads.some((d) => d.status === "downloading");
-		if (anyActive) {
-			downloads.filter((d) => d.status === "downloading").forEach((d) => rpc.request.pauseDownload({ id: d.id }));
-			toast("Paused all transfers");
-		} else {
-			downloads.filter((d) => d.status === "paused").forEach((d) => rpc.request.resumeDownload({ id: d.id }));
-			toast("Resumed all transfers");
-		}
-	};
-
-	const clearCompleted = () => {
-		const rpc = getRPC();
-		if (!rpc) return;
-		const done = downloads.filter((d) => d.status === "done");
-		done.forEach((d) => rpc.request.removeDownload({ id: d.id }));
-		setDownloads((prev) => prev.filter((d) => d.status !== "done"));
-		toast("Cleared completed downloads");
-	};
 
 	// ── Keyboard Shortcuts ─────────────────────────────────────────
 	useEffect(() => {
@@ -184,13 +55,15 @@ function App() {
 					setAddOpen(true);
 				} else if (e.key === 'p') {
 					e.preventDefault();
-					pauseAll();
+					const anyActive = downloads.some((d) => d.status === "downloading");
+					if (anyActive) pauseAll();
+					else resumeAll();
 				}
 			}
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [downloads]);
+	}, [downloads, pauseAll, resumeAll]);
 
 	// ── Derived state ──────────────────────────────────────────────
 	const counts = useMemo(
@@ -207,7 +80,7 @@ function App() {
 	const totalDownBps = downloads.reduce((s, d) => s + (d.status === "downloading" ? d.speedBps : 0), 0);
 	const totalSize = downloads.reduce((s, d) => s + d.sizeBytes, 0);
 
-	const filtered = useMemo(() => {
+	const filteredIds = useMemo(() => {
 		let list = downloads;
 		if (filter === "active") list = list.filter((d) => d.status === "downloading");
 		else if (filter === "queued") list = list.filter((d) => d.status === "queued");
@@ -224,21 +97,16 @@ function App() {
 		if (sortBy === "name") sorted.sort((a, b) => a.name.localeCompare(b.name));
 		if (sortBy === "size") sorted.sort((a, b) => b.sizeBytes - a.sizeBytes);
 		if (sortBy === "progress") sorted.sort((a, b) => b.downloadedBytes / (b.sizeBytes || 1) - a.downloadedBytes / (a.sizeBytes || 1));
-		return sorted;
+		return sorted.map(d => d.id);
 	}, [downloads, filter, subTab, search, sortBy]);
 
-	const selected = downloads.find((d) => d.id === selectedId) ?? filtered[0] ?? null;
+	const selected = downloads.find((d) => d.id === selectedId) ?? null;
 	const anyActive = counts.active > 0;
 
 	// ── Render ─────────────────────────────────────────────────────
 	return (
 		<div className="flex h-screen w-full overflow-hidden">
 			<Sidebar
-				filter={filter}
-				onFilterChange={setFilter}
-				counts={counts}
-				totalDownBps={totalDownBps}
-				totalUpBps={totalDownBps * 0.04}
 				onOpenSettings={() => setSettingsOpen(true)}
 			/>
 
@@ -263,7 +131,7 @@ function App() {
 					</div>
 
 					<button
-						onClick={pauseAll}
+						onClick={anyActive ? pauseAll : resumeAll}
 						className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-surface-2 border border-border text-muted-foreground hover:bg-surface-3 hover:text-foreground transition-colors"
 					>
 						{anyActive ? (<><Pause className="w-3.5 h-3.5" />Pause All</>) : (<><Play className="w-3.5 h-3.5" />Resume All</>)}
@@ -342,7 +210,7 @@ function App() {
 
 				{/* List */}
 				<div className="flex-1 overflow-y-auto px-3 py-2">
-					{filtered.length === 0 ? (
+					{filteredIds.length === 0 ? (
 						<div className="h-full flex flex-col items-center justify-center text-center px-6">
 							<div className="text-[15px] font-medium">No downloads yet</div>
 							<p className="text-[12px] text-muted-foreground-2 mt-1 max-w-sm">
@@ -350,28 +218,20 @@ function App() {
 							</p>
 						</div>
 					) : (
-						filtered.map((d) => (
+						filteredIds.map((id) => (
 							<DownloadRow
-								key={d.id}
-								download={d}
-								selected={selectedId === d.id}
-								onSelect={() => setSelectedId(d.id)}
-								onToggle={() => toggleOne(d.id)}
-								onRemove={() => removeOne(d.id)}
+								key={id}
+								id={id}
 							/>
 						))
 					)}
 				</div>
 			</main>
 
-			<DetailPanel
-				download={selected}
-				onToggle={() => selected && toggleOne(selected.id)}
-				onRemove={() => selected && removeOne(selected.id)}
-			/>
+			<DetailPanel />
 
 			<AddUrlModal open={addOpen} onOpenChange={setAddOpen} onAdd={addDownload} />
-			<SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} getRPC={getRPC} />
+			<SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 			<Toaster
 				position="bottom-right"
 				theme="dark"

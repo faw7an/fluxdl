@@ -13,25 +13,7 @@ import {
 import logoPng from "@/assets/icon-512.png";
 import { cn } from "@/lib/utils";
 import { formatSpeed } from "@/lib/downloads-data";
-
-export type FilterKey = "all" | "active" | "queued" | "done" | "error";
-
-interface Counts {
-  all: number;
-  active: number;
-  queued: number;
-  done: number;
-  error: number;
-}
-
-interface Props {
-  filter: FilterKey;
-  onFilterChange: (f: FilterKey) => void;
-  counts: Counts;
-  totalDownBps: number;
-  totalUpBps: number;
-  onOpenSettings: () => void;
-}
+import { useDownloadStore, type FilterKey } from "@/store/downloads";
 
 const navItems: {
   key: FilterKey;
@@ -52,8 +34,20 @@ const categories = [
   { label: "Software", icon: Package },
   { label: "Documents", icon: FileText },
 ];
+export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const { downloads, filter, setFilter } = useDownloadStore();
 
-export function Sidebar({ filter, onFilterChange, counts, totalDownBps, totalUpBps, onOpenSettings }: Props) {
+  const counts = {
+    all: downloads.length,
+    active: downloads.filter((d) => d.status === "downloading").length,
+    queued: downloads.filter((d) => d.status === "queued").length,
+    done: downloads.filter((d) => d.status === "done").length,
+    error: downloads.filter((d) => d.status === "error").length,
+  };
+
+  const totalDownBps = downloads.reduce((s, d) => s + (d.status === "downloading" ? d.speedBps : 0), 0);
+  const totalUpBps = totalDownBps * 0.04;
+
   const maxBps = 30 * 1024 * 1024;
   const downPct = Math.min(100, (totalDownBps / maxBps) * 100);
   const upPct = Math.min(100, (totalUpBps / maxBps) * 100);
@@ -82,7 +76,7 @@ export function Sidebar({ filter, onFilterChange, counts, totalDownBps, totalUpB
           return (
             <button
               key={item.key}
-              onClick={() => onFilterChange(item.key)}
+              onClick={() => setFilter(item.key)}
               className={cn(
                 "w-full flex items-center gap-2.5 px-3 py-2 my-0.5 rounded-md text-[13px] font-medium transition-colors",
                 active

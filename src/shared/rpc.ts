@@ -8,7 +8,7 @@ export type AppRPC = {
 		requests: {
 			getDownloads: { params: Record<string, never>; response: Download[] };
 			startDownload: {
-				params: { url: string; category: string; segments: number };
+				params: { url: string; category: string; segments: number; headers?: Record<string, string> };
 				response: { id: string };
 			};
 			pauseDownload: { params: { id: string }; response: boolean };
@@ -18,7 +18,7 @@ export type AppRPC = {
 			updateSetting: { params: { key: string; value: string }; response: boolean };
 			logMessage: { params: { level: "info" | "warn" | "error"; message: string; context?: string }; response: boolean };
 			exportLogs: { params: Record<string, never>; response: string };
-			fetchUrlInfo: { params: { url: string }; response: { name: string; sizeBytes: number; acceptRanges: boolean; error?: string } };
+			fetchUrlInfo: { params: { url: string; headers?: Record<string, string> }; response: { name: string; sizeBytes: number; acceptRanges: boolean; headers?: Record<string, string>; error?: string } };
 		};
 		messages: {
 			downloadProgress: {

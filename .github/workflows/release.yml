@@ -20,18 +20,36 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Install Packaging Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm libarchive-tools
+          gem install fpm
+          wget -O appimagetool https://github.com/AppImage/AppImageKit/releases/download/13/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+
       - name: Install Dependencies
         run: bun install
 
       - name: Build Application (Linux)
         run: bun run build:canary
         
-      # Electrobun normally emits to build/ or dist/ output paths depending on configuration schema setup
-      # Assuming it renders into the traditional output folder designated by Electrobun configs or 'build/'
-      - name: Archive Linux Artifacts
+      - name: Package Linux Formats
+        run: |
+          chmod +x scripts/package-linux.sh
+          ./scripts/package-linux.sh
+        env:
+          APPIMAGE_TOOL: ./appimagetool
+
+      - name: Archive Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: fluxdl-linux-build
+          name: fluxdl-linux-packages
           path: artifacts/
 
       - name: Publish to Github Releases

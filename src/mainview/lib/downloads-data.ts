@@ -15,6 +15,8 @@ export interface Download {
   activeSegments: number;
   addedAt: number; // ms
   source: string; // host
+  customHeaders?: Record<string, string>;
+  serverHeaders?: Record<string, string>;
   checksum?: string;
   error?: string;
 }
@@ -179,7 +181,8 @@ export const initialDownloads: Download[] = [
 ];
 
 export function formatBytes(b: number, digits = 2): string {
-  if (b < KB) return `${b} B`;
+  if (b < 0.1) return "0 B";
+  if (b < KB) return `${Math.round(b)} B`;
   if (b < MB) return `${(b / KB).toFixed(digits)} KB`;
   if (b < GB) return `${(b / MB).toFixed(digits)} MB`;
   return `${(b / GB).toFixed(digits)} GB`;

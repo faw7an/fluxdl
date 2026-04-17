@@ -9,6 +9,7 @@ export interface WorkerLaunchData {
 	endByte: number; // inclusive
 	segmentIndex: number;
 	savePath: string; // The .part.N file
+	headers?: Record<string, string>;
 }
 
 function log(level: "info" | "warn" | "error", message: string, segmentIndex: number) {
@@ -20,12 +21,12 @@ self.onmessage = async (event: MessageEvent) => {
 
 	if ("type" in data && data.type === "abort") {
 		// Native worker doesn't strictly have an external abort controller 
-		// if we aren't storing the fetch controller globally, but we can call process.exit()
-		process.exit(0);
+		// if we aren't storing the fetch controller globally. 
+		// Returning will allow the task to end normally or wait for terminate()
 		return;
 	}
 
-	const { url, startByte, endByte, segmentIndex, savePath } = data as WorkerLaunchData;
+	const { url, startByte, endByte, segmentIndex, savePath, headers: customHeaders } = data as WorkerLaunchData;
 
 	let downloaded = 0;
 	let lastEmit = Date.now();
@@ -51,10 +52,23 @@ self.onmessage = async (event: MessageEvent) => {
 		}
 
 		const headers: Record<string, string> = {
-			"Range": `bytes=${currentStart}-${endByte}`
+			"Range": `bytes=${currentStart}-${endByte}`,
+			"User-Agent": "FluxDL/1.0.7 (Electrobun; Multi-Segment Download Manager)",
+			...(customHeaders || {})
 		};
 
-		const res = await fetch(url, { headers });
+		const fetchOptions: RequestInit = { 
+			headers,
+			redirect: "follow"
+		};
+
+		let res: Response;
+		try {
+			res = await fetch(url, fetchOptions);
+		} catch (e) {
+			// Fallback for systems with broken CA stores
+			res = await fetch(url, { ...fetchOptions, tls: { rejectUnauthorized: false } } as any);
+		}
 
 		if (!res.ok && res.status !== 206) {
 			log("error", `HTTP ${res.status} ${res.statusText}`, segmentIndex);
@@ -68,7 +82,8 @@ self.onmessage = async (event: MessageEvent) => {
 
 		log("info", `Starting fetch for range ${currentStart}-${endByte}`, segmentIndex);
 
-		const writer = file.writer();
+		// ✅ FIX: Use position parameter to append to partial file instead of overwriting from 0
+		const writer = file.writer({ position: downloaded });
 		const reader = res.body.getReader();
 
 		// Ensure we report base downloaded bytes first
@@ -81,20 +96,23 @@ self.onmessage = async (event: MessageEvent) => {
 			writer.write(value);
 			downloaded += value.byteLength;
 
-			const now = Date.now();
-			const elapsed = (now - lastEmit) / 1000;
+			// Optimized tracking: Only check clock every 64KB to save CPU
+			if (downloaded - lastBytes > 65536) {
+				const now = Date.now();
+				const elapsed = (now - lastEmit) / 1000;
 
-			if (elapsed >= 0.2) {
-				const speedBps = (downloaded - lastBytes) / elapsed;
-				lastBytes = downloaded;
-				lastEmit = now;
-				
-				postMessage({ 
-					type: "progress", 
-					segmentIndex, 
-					downloadedBytes: downloaded, 
-					speedBps 
-				});
+				if (elapsed >= 0.2) {
+					const speedBps = (downloaded - lastBytes) / elapsed;
+					lastBytes = downloaded;
+					lastEmit = now;
+					
+					postMessage({ 
+						type: "progress", 
+						segmentIndex, 
+						downloadedBytes: downloaded, 
+						speedBps 
+					});
+				}
 			}
 		}
 

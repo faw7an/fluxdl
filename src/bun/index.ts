@@ -39,9 +39,9 @@ const myWebviewRPC = BrowserView.defineRPC<AppRPC>({
 				return engine.getAll();
 			},
 
-			startDownload: async (params: { url: string; category: string; segments: number }) => {
+			startDownload: async (params: { url: string; category: string; segments: number; headers?: Record<string, string> }) => {
 				if (!engine) throw new Error("Engine not initialized");
-				return engine.start(params.url, params.category, params.segments);
+				return engine.start(params.url, params.category, params.segments, params.headers);
 			},
 
 			pauseDownload: async (params: { id: string }) => {
@@ -86,9 +86,9 @@ const myWebviewRPC = BrowserView.defineRPC<AppRPC>({
 				return await file.text();
 			},
 
-			fetchUrlInfo: async (params: { url: string }) => {
+			fetchUrlInfo: async (params: { url: string; headers?: Record<string, string> }) => {
 				if (!engine) throw new Error("Engine not initialized");
-				return engine.fetchUrlInfo(params.url);
+				return engine.fetchUrlInfo(params.url, params.headers);
 			},
 		},
 		messages: {},
@@ -108,38 +108,24 @@ const mainWindow = new BrowserWindow({
 	rpc: myWebviewRPC,
 });
 
-// Linux/Hyprland Stabilization: Explicitly reinforce the RPC bridge injection
-// 1. Ensure sandbox is OFF (default is false, but we make it explicit)
-// (Note: Electrobun doesn't have a top-level 'sandbox' key in the BrowserWindow constructor, 
-// it's usually inherited from BrowserView, but we'll ensure the view is correctly configured)
-
-// 2. Late-binding attachment
-setTimeout(() => {
-	mainWindow.rpc = myWebviewRPC;
-	if (mainWindow.mainview) {
-		mainWindow.mainview.rpc = myWebviewRPC;
-	}
-}, 100);
-
-// Explicitly ensure the RPC bridge is attached to the view and window
-mainWindow.rpc = myWebviewRPC;
-if (mainWindow.mainview) {
-	mainWindow.mainview.rpc = myWebviewRPC;
-}
-
 // ── Download engine (late init to capture mainWindow) ─────────────────────
+let tickCount = 0;
 engine = new DownloadsEngine(
 	// onProgress
 	(id, downloadedBytes, speedBps, activeSegments, status) => {
-		mainWindow.rpc.send.downloadProgress({ id, downloadedBytes, speedBps, activeSegments, status });
+		if (tickCount++ % 10 === 0) {
+			logger.info(`Bridge: Sending progress for ${id.substring(0,6)} (${downloadedBytes} bytes)`, "RPC");
+		}
+		mainWindow.webview.rpc.send.downloadProgress({ id, downloadedBytes, speedBps, activeSegments, status });
 	},
 	// onComplete
 	(id, path) => {
-		mainWindow.rpc.send.downloadComplete({ id, path });
+		mainWindow.webview.rpc.send.downloadComplete({ id, path });
 	},
 	// onError
 	(id, error) => {
-		mainWindow.rpc.send.downloadError({ id, error });
+		logger.error(`Bridge: Sending error for ${id.substring(0,6)}: ${error}`, "RPC");
+		mainWindow.webview.rpc.send.downloadError({ id, error });
 	},
 );
 

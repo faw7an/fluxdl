@@ -4,13 +4,17 @@ export default {
 	app: {
 		name: "FluxDL",
 		identifier: "fluxdl.electrobun.dev",
-		version: "1.0.7",
+		version: "1.0.8",
 	},
 	build: {
+		bun: {
+			entrypoint: "src/bun/index.ts",
+		},
 		// Vite builds to dist/, we copy from there
 		copy: {
 			"dist/index.html": "views/mainview/index.html",
 			"dist/assets": "views/mainview/assets",
+			"src/bun/download-worker.ts": "bun/download-worker.ts",
 		},
 		// Ignore Vite output in watch mode — HMR handles view rebuilds separately
 		watchIgnore: ["dist/**"],
@@ -18,11 +22,11 @@ export default {
 			bundleCEF: false,
 		},
 		linux: {
-			bundleCEF: false,
+			bundleCEF: true,
 			icon: "src/mainview/assets/icon-512.png",
 		},
 		win: {
-			bundleCEF: false,
+			bundleCEF: true,
 			icon: "src/mainview/assets/icon-512.png",
 		},
 	},

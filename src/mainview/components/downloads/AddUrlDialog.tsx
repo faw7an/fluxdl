@@ -24,7 +24,7 @@ import { uiLogger } from "@/lib/logger";
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAdd: (data: { url: string; category: string; segments: number }) => void;
+  onAdd: (data: { url: string; category: string; segments: number; headers?: Record<string, string> }) => void;
 }
 
 export function AddUrlModal({ open, onOpenChange, onAdd }: Props) {
@@ -34,8 +34,24 @@ export function AddUrlModal({ open, onOpenChange, onAdd }: Props) {
   const [segments, setSegments] = useState("8");
   const [loading, setLoading] = useState(false);
 
-  const [metadata, setMetadata] = useState<{ name: string; sizeBytes: number; acceptRanges: boolean; error?: string } | null>(null);
+  const [metadata, setMetadata] = useState<{ name: string; sizeBytes: number; acceptRanges: boolean; headers?: Record<string, string>; error?: string } | null>(null);
+  const [headerRaw, setHeaderRaw] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
+  const parseHeaders = (raw: string): Record<string, string> | undefined => {
+    if (!raw.trim()) return undefined;
+    const lines = raw.split("\n");
+    const headers: Record<string, string> = {};
+    for (const line of lines) {
+      const parts = line.split(":");
+      if (parts.length >= 2) {
+        const key = parts[0].trim();
+        const value = parts.slice(1).join(":").trim();
+        if (key && value) headers[key] = value;
+      }
+    }
+    return Object.keys(headers).length > 0 ? headers : undefined;
+  };
   const handleNext = async () => {
     if (!url.trim()) return;
     setLoading(true);
@@ -43,7 +59,8 @@ export function AddUrlModal({ open, onOpenChange, onAdd }: Props) {
       const rpc = getRPC();
       if (!rpc) throw new Error("Backend not connected");
 
-      const info = await rpc.request.fetchUrlInfo({ url: url.trim() });
+      const customHeaders = parseHeaders(headerRaw);
+      const info = await rpc.request.fetchUrlInfo({ url: url.trim(), headers: customHeaders });
       if (info.error) {
         uiLogger.warn(`Pre-flight check returned error: ${info.error}`, "AddUrl");
       }
@@ -66,7 +83,8 @@ export function AddUrlModal({ open, onOpenChange, onAdd }: Props) {
   };
 
   const submit = () => {
-    onAdd({ url: url.trim(), category, segments: parseInt(segments) });
+    const customHeaders = parseHeaders(headerRaw);
+    onAdd({ url: url.trim(), category, segments: parseInt(segments), headers: customHeaders });
     handleClose();
   };
 
@@ -95,19 +113,44 @@ export function AddUrlModal({ open, onOpenChange, onAdd }: Props) {
 
         <div className="space-y-4 mt-2">
           {step === 1 ? (
-            <div className="space-y-1.5">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground-2 font-semibold">
-                Source URL
-              </Label>
-              <Input
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleNext()}
-                placeholder="https://example.com/file.zip"
-                className="font-mono text-[12px] bg-surface-2 border-border"
-                autoFocus
-                disabled={loading}
-              />
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label className="text-[10px] uppercase tracking-wider text-muted-foreground-2 font-semibold">
+                  Source URL
+                </Label>
+                <Input
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleNext()}
+                  placeholder="https://example.com/file.zip"
+                  className="font-mono text-[12px] bg-surface-2 border-border"
+                  autoFocus
+                  disabled={loading}
+                />
+              </div>
+
+              <div>
+                <button
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  className="text-[10px] text-primary hover:text-primary-strong font-semibold uppercase tracking-wider flex items-center gap-1.5"
+                >
+                  {showAdvanced ? "▼ Hide Advanced" : "▶ Show Advanced (Headers)"}
+                </button>
+
+                {showAdvanced && (
+                  <div className="mt-2 space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <Label className="text-[9px] uppercase tracking-wider text-muted-foreground-2">
+                      Custom HTTP Headers (Key: Value)
+                    </Label>
+                    <textarea
+                      value={headerRaw}
+                      onChange={(e) => setHeaderRaw(e.target.value)}
+                      placeholder="Authorization: Bearer mytoken&#10;Cookie: session=abc"
+                      className="w-full h-20 bg-surface-2 border border-border rounded-md p-2 font-mono text-[11px] resize-none focus:outline-none focus:border-primary/50 text-foreground"
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <div className="space-y-4">

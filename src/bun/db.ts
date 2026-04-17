@@ -38,6 +38,8 @@ export class DBManager {
 				activeSegments INTEGER,
 				addedAt INTEGER,
 				source TEXT,
+				customHeaders TEXT,
+				serverHeaders TEXT,
 				error TEXT
 			);
 		`);
@@ -69,14 +71,16 @@ export class DBManager {
 			activeSegments: Number(row.activeSegments),
 			addedAt: Number(row.addedAt),
 			source: row.source,
+			customHeaders: row.customHeaders ? JSON.parse(row.customHeaders) : undefined,
+			serverHeaders: row.serverHeaders ? JSON.parse(row.serverHeaders) : undefined,
 			error: row.error || undefined,
 		}));
 	}
 
 	public insertDownload(d: Download) {
 		const stmt = this.db.query(`
-			INSERT OR REPLACE INTO downloads (id, name, url, kind, category, sizeBytes, downloadedBytes, speedBps, status, segments, activeSegments, addedAt, source, error)
-			VALUES ($id, $name, $url, $kind, $category, $sizeBytes, $downloadedBytes, $speedBps, $status, $segments, $activeSegments, $addedAt, $source, $error)
+			INSERT OR REPLACE INTO downloads (id, name, url, kind, category, sizeBytes, downloadedBytes, speedBps, status, segments, activeSegments, addedAt, source, customHeaders, serverHeaders, error)
+			VALUES ($id, $name, $url, $kind, $category, $sizeBytes, $downloadedBytes, $speedBps, $status, $segments, $activeSegments, $addedAt, $source, $customHeaders, $serverHeaders, $error)
 		`);
 		stmt.run({
 			$id: d.id,
@@ -92,6 +96,8 @@ export class DBManager {
 			$activeSegments: d.activeSegments,
 			$addedAt: d.addedAt,
 			$source: d.source,
+			$customHeaders: d.customHeaders ? JSON.stringify(d.customHeaders) : null,
+			$serverHeaders: d.serverHeaders ? JSON.stringify(d.serverHeaders) : null,
 			$error: d.error || null,
 		});
 	}

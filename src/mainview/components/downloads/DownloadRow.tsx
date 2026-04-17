@@ -2,22 +2,18 @@ import { Pause, Play, X, FolderOpen, RotateCw } from "lucide-react";
 import { memo } from "react";
 import { cn } from "@/lib/utils";
 import {
-  type Download,
   fileKindStyles,
   formatBytes,
   formatEta,
   formatSpeed,
 } from "@/lib/downloads-data";
+import { useDownloadStore } from "@/store/downloads";
 
 interface Props {
-  download: Download;
-  selected: boolean;
-  onSelect: () => void;
-  onToggle: () => void;
-  onRemove: () => void;
+  id: string;
 }
 
-const statusStyles: Record<Download["status"], string> = {
+const statusStyles: Record<string, string> = {
   downloading: "bg-primary/15 text-primary",
   paused: "bg-warning/15 text-warning",
   queued: "bg-muted-foreground/15 text-muted-foreground",
@@ -25,7 +21,7 @@ const statusStyles: Record<Download["status"], string> = {
   error: "bg-destructive/15 text-destructive",
 };
 
-const statusLabels: Record<Download["status"], string> = {
+const statusLabels: Record<string, string> = {
   downloading: "Downloading",
   paused: "Paused",
   queued: "Queued",
@@ -33,14 +29,22 @@ const statusLabels: Record<Download["status"], string> = {
   error: "Failed",
 };
 
-export const DownloadRow = memo(function DownloadRow({ download, selected, onSelect, onToggle, onRemove }: Props) {
-  const pct = (download.downloadedBytes / download.sizeBytes) * 100;
+export const DownloadRow = memo(function DownloadRow({ id }: Props) {
+  const download = useDownloadStore(state => state.downloads.find(d => d.id === id));
+  const selected = useDownloadStore(state => state.selectedId === id);
+  const setSelectedId = useDownloadStore(state => state.setSelectedId);
+  const toggleDownload = useDownloadStore(state => state.toggleDownload);
+  const removeDownload = useDownloadStore(state => state.removeDownload);
+
+  if (!download) return null;
+
+  const pct = download.sizeBytes > 0 ? (download.downloadedBytes / download.sizeBytes) * 100 : 0;
   const remaining = download.sizeBytes - download.downloadedBytes;
-  const kindStyle = fileKindStyles[download.kind];
+  const kindStyle = fileKindStyles[download.kind] || fileKindStyles.img;
 
   return (
     <div
-      onClick={onSelect}
+      onClick={() => setSelectedId(id)}
       className={cn(
         "group bg-surface-1 border rounded-xl p-4 mb-2 cursor-pointer transition-all relative overflow-hidden",
         selected
@@ -98,7 +102,7 @@ export const DownloadRow = memo(function DownloadRow({ download, selected, onSel
             <ActionBtn
               onClick={(e) => {
                 e.stopPropagation();
-                onToggle();
+                toggleDownload(id);
               }}
               label="Retry"
             >
@@ -108,7 +112,7 @@ export const DownloadRow = memo(function DownloadRow({ download, selected, onSel
             <ActionBtn
               onClick={(e) => {
                 e.stopPropagation();
-                onToggle();
+                toggleDownload(id);
               }}
               label={download.status === "paused" ? "Resume" : "Pause"}
             >
@@ -126,7 +130,7 @@ export const DownloadRow = memo(function DownloadRow({ download, selected, onSel
           <ActionBtn
             onClick={(e) => {
               e.stopPropagation();
-              onRemove();
+              removeDownload(id);
             }}
             label="Remove"
             danger
@@ -185,14 +189,6 @@ export const DownloadRow = memo(function DownloadRow({ download, selected, onSel
         </div>
       )}
     </div>
-  );
-}, (prev, next) => {
-  return (
-    prev.selected === next.selected &&
-    prev.download.downloadedBytes === next.download.downloadedBytes &&
-    prev.download.status === next.download.status &&
-    prev.download.speedBps === next.download.speedBps &&
-    prev.download.activeSegments === next.download.activeSegments
   );
 });
 

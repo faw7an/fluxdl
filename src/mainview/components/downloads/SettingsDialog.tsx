@@ -5,15 +5,15 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Toaster, toast } from "sonner";
-import { type AppRPC } from "@/shared/rpc";
+import { useDownloadStore } from "@/store/downloads";
+import { getRPC } from "@/lib/rpc-helper";
 
 interface Props {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	getRPC: () => AppRPC["webview"] | any;
 }
 
-export function SettingsDialog({ open, onOpenChange, getRPC }: Props) {
+export function SettingsDialog({ open, onOpenChange }: Props) {
 	const [maxConcurrent, setMaxConcurrent] = useState("3");
 	const [osNotifs, setOsNotifs] = useState(true);
 	const [checksums, setChecksums] = useState(false);
@@ -37,7 +37,7 @@ export function SettingsDialog({ open, onOpenChange, getRPC }: Props) {
 				setLoading(false);
 			}).catch(() => setLoading(false));
 		}
-	}, [open, getRPC]);
+	}, [open]);
 
 	const handleSave = async () => {
 		const rpc = getRPC();

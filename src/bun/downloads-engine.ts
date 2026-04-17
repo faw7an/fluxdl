@@ -86,7 +86,7 @@ class DownloadsEngine {
 		return Array.from(this.queue.values()).sort((a, b) => b.addedAt - a.addedAt);
 	}
 
-	start(url: string, category: string, segments: number): { id: string } {
+	start(url: string, category: string, segments: number, headers?: Record<string, string>): { id: string } {
 		const id = crypto.randomUUID();
 		const name = this.extractFilename(url);
 		const cat = category as Download["category"];
@@ -105,6 +105,7 @@ class DownloadsEngine {
 			activeSegments: 0,
 			addedAt: Date.now(),
 			source: this.extractHost(url),
+			customHeaders: headers,
 		};
 
 		logger.info(`Queued download: ${url}`, "Engine");
@@ -115,7 +116,7 @@ class DownloadsEngine {
 		return { id };
 	}
 
-	pause(id: string): boolean {
+	async pause(id: string): Promise<boolean> {
 		const d = this.queue.get(id);
 		if (!d || d.status !== "downloading") return false;
 
@@ -128,6 +129,10 @@ class DownloadsEngine {
 		if (downloadWorkers) {
 			for (const worker of downloadWorkers) {
 				worker.postMessage({ type: "abort" });
+			}
+			// Give workers 100ms to handle abort before forceful termination
+			await new Promise(resolve => setTimeout(resolve, 100));
+			for (const worker of downloadWorkers) {
 				worker.terminate();
 			}
 			this.workers.delete(id);
@@ -204,38 +209,66 @@ class DownloadsEngine {
 		try {
 			await mkdir(dirname(savePath), { recursive: true });
 
-			let headRes = await fetch(d.url, { method: "HEAD", signal: controller.signal });
+			const fetchOptions: RequestInit = { 
+				method: "HEAD", 
+				signal: controller.signal,
+				headers: {
+					"User-Agent": "FluxDL/1.0.7 (Electrobun; Multi-Segment Download Manager)",
+					...(d.customHeaders || {})
+				},
+				redirect: "follow"
+			};
+
+			let headRes: Response;
+			try {
+				headRes = await fetch(d.url, fetchOptions);
+			} catch (e) {
+				logger.warn(`Initial HEAD fetch failed, retrying with relaxed TLS: ${String(e)}`, `Engine:${id.substring(0,6)}`);
+				// Fallback for systems with broken CA stores (common in some Linux/Bun environments)
+				headRes = await fetch(d.url, { ...fetchOptions, tls: { rejectUnauthorized: false } } as any);
+			}
+
 			if (!headRes.ok) {
-				headRes = await fetch(d.url, {
+				const getOptions = {
+					...fetchOptions,
 					method: "GET",
-					headers: { "Range": "bytes=0-0" },
-					signal: controller.signal
-				});
+					headers: { 
+						...fetchOptions.headers,
+						"Range": "bytes=0-0" 
+					},
+				};
+				try {
+					headRes = await fetch(d.url, getOptions);
+				} catch (e) {
+					headRes = await fetch(d.url, { ...getOptions, tls: { rejectUnauthorized: false } } as any);
+				}
 			}
 
-			const contentLengthHeader = headRes.headers.get("content-length");
-			const acceptRanges = headRes.headers.get("accept-ranges") === "bytes";
-			const totalSize = contentLengthHeader ? parseInt(contentLengthHeader) : 0;
-			
-			let numSegments = 1;
-			if (acceptRanges && totalSize > 0) {
-				numSegments = Math.max(1, d.segments);
-			}
+			const contentLength = headRes.headers.get("content-length");
+			const totalSize = contentLength ? parseInt(contentLength) : 0;
+			const acceptRanges = headRes.headers.get("accept-ranges") === "bytes" || headRes.status === 206;
+			const numSegments = d.segments;
 
-			this.updateStatus(id, { sizeBytes: totalSize });
+			const serverHeaders: Record<string, string> = {};
+			headRes.headers.forEach((v, k) => {
+				if (["etag", "last-modified", "server", "content-type", "accept-ranges"].includes(k.toLowerCase())) {
+					serverHeaders[k] = v;
+				}
+			});
+
+			this.updateStatus(id, { sizeBytes: totalSize, serverHeaders });
 			await mkdir(partsDir, { recursive: true });
 
+			// If server doesn't support ranges or size is unknown, force 1 segment
+			const effectiveSegments = (acceptRanges && totalSize > 0) ? numSegments : 1;
+
 			const ranges: { start: number; end: number }[] = [];
-			const chunkSize = Math.floor(totalSize / numSegments);
+			const chunkSize = effectiveSegments > 1 ? Math.floor(totalSize / effectiveSegments) : totalSize;
 
-			for (let i = 0; i < numSegments; i++) {
+			for (let i = 0; i < effectiveSegments; i++) {
 				const start = i * chunkSize;
-				const end = i === numSegments - 1 ? totalSize - 1 : start + chunkSize - 1;
+				const end = i === effectiveSegments - 1 ? (totalSize > 0 ? totalSize - 1 : -1) : start + chunkSize - 1;
 				ranges.push({ start, end });
-			}
-
-			if (totalSize === 0) {
-				ranges[0] = { start: 0, end: -1 };
 			}
 
 			const partsProgress = new Map<number, number>();
@@ -245,8 +278,16 @@ class DownloadsEngine {
 			const activeWorkerInstances: Worker[] = [];
 			this.workers.set(id, activeWorkerInstances);
 
-			this.updateStatus(id, { activeSegments: numSegments });
+			this.updateStatus(id, { activeSegments: effectiveSegments });
 			
+			let lastDownloadSweep = 0;
+			let lastTimeSweep = Date.now();
+			let currentEmaSpeed = 0;
+			const EMA_ALPHA = 0.2;
+			let tickCount = 0;
+			let totalDownloadedBytes = 0;
+			let firstPulse = true;
+
 			const workerPromises = ranges.map((range, index) => {
 				return new Promise<void>((resolve, reject) => {
 					const workerUrl = new URL("download-worker.ts", import.meta.url).href;
@@ -262,6 +303,7 @@ class DownloadsEngine {
 						endByte: range.end >= 0 ? range.end : Number.MAX_SAFE_INTEGER,
 						segmentIndex: index,
 						savePath: partPath,
+						headers: d.customHeaders,
 					});
 
 					worker.onmessage = (event) => {
@@ -272,6 +314,39 @@ class DownloadsEngine {
 							else logger.info(msg.message, `Engine:${id.substring(0,6)}`);
 						} else if (msg.type === "progress") {
 							partsProgress.set(index, msg.downloadedBytes);
+							
+							// Event-driven progress update (throttled)
+							const now = Date.now();
+							const elapsed = (now - lastTimeSweep) / 1000;
+							
+							if (elapsed >= 0.5 || firstPulse) {
+								totalDownloadedBytes = 0;
+								for (const bytes of partsProgress.values()) totalDownloadedBytes += bytes;
+
+								const instantSpeed = (totalDownloadedBytes - lastDownloadSweep) / elapsed;
+								currentEmaSpeed = currentEmaSpeed === 0
+									? instantSpeed
+									: (EMA_ALPHA * instantSpeed) + ((1 - EMA_ALPHA) * currentEmaSpeed);
+
+								// Clamp tiny speeds to zero and round for UI stability
+								if (currentEmaSpeed < 0.1) currentEmaSpeed = 0;
+								else currentEmaSpeed = Math.round(currentEmaSpeed * 100) / 100;
+
+								lastDownloadSweep = totalDownloadedBytes;
+								lastTimeSweep = now;
+
+								if (firstPulse) {
+									logger.info(`First pulse for download ${id.substring(0,6)}`, "Engine");
+									firstPulse = false;
+								}
+
+								this.onProgress(id, totalDownloadedBytes, currentEmaSpeed, activeWorkers.size, "downloading");
+								
+								tickCount++;
+								if (tickCount % 10 === 0) {
+									this.updateStatus(id, { downloadedBytes: totalDownloadedBytes, speedBps: currentEmaSpeed, activeSegments: activeWorkers.size });
+								}
+							}
 						} else if (msg.type === "completed") {
 							activeWorkers.delete(index);
 							worker.terminate();
@@ -282,48 +357,22 @@ class DownloadsEngine {
 						}
 					};
 					worker.onerror = (err) => { worker.terminate(); reject(err); };
+
+					// Handle external abortion
+					controller.signal.addEventListener("abort", () => {
+						worker.terminate();
+						reject(new Error("paused"));
+					});
 				});
 			});
 
-			let lastDownloadSweep = 0;
-			let lastTimeSweep = Date.now();
-			let currentEmaSpeed = 0;
-			const EMA_ALPHA = 0.2;
-			let tickCount = 0;
-
-			const progressTicker = setInterval(() => {
-				let totalDownloadedBytes = 0;
-				for (const bytes of partsProgress.values()) totalDownloadedBytes += bytes;
-
-				const now = Date.now();
-				const elapsed = (now - lastTimeSweep) / 1000;
-
-				if (elapsed >= 0.5) {
-					const instantSpeed = (totalDownloadedBytes - lastDownloadSweep) / elapsed;
-					currentEmaSpeed = currentEmaSpeed === 0
-						? instantSpeed
-						: (EMA_ALPHA * instantSpeed) + ((1 - EMA_ALPHA) * currentEmaSpeed);
-
-					lastDownloadSweep = totalDownloadedBytes;
-					lastTimeSweep = now;
-
-					this.onProgress(id, totalDownloadedBytes, currentEmaSpeed, activeWorkers.size, "downloading");
-					
-					tickCount++;
-					if (tickCount % 5 === 0) {
-						this.updateStatus(id, { downloadedBytes: totalDownloadedBytes, speedBps: currentEmaSpeed, activeSegments: activeWorkers.size });
-					}
-				}
-			}, 500);
-
 			await Promise.all(workerPromises);
-			clearInterval(progressTicker);
 
 			this.updateStatus(id, { status: "downloading", speedBps: 0, activeSegments: 0 });
 			const finalFile = Bun.file(savePath);
 			const writer = finalFile.writer();
 			
-			for (let i = 0; i < numSegments; i++) {
+			for (let i = 0; i < ranges.length; i++) {
 				const partPath = join(partsDir, `part.${i}`);
 				const partFile = Bun.file(partPath);
 				if (await partFile.exists()) {
@@ -334,6 +383,7 @@ class DownloadsEngine {
 				}
 			}
 			await writer.end();
+			await rmdir(partsDir, { recursive: true }).catch(() => { });
 
 			// File type resolution using magic bytes
 			let finalKind = d.kind;
@@ -400,8 +450,14 @@ class DownloadsEngine {
 
 			if (err instanceof Error && err.name === "AbortError" || String(err).includes("paused")) return;
 
-			const msg = err instanceof Error ? err.message : String(err);
-			logger.error(`Download failed critically`, `Engine:${id.substring(0,6)}`, err);
+			let msg = err instanceof Error ? err.message : String(err);
+			// Deep inspection for ErrorEvent objects which appear as [object ErrorEvent]
+			if (msg === "[object ErrorEvent]" && err && typeof err === "object") {
+				const ev = err as any;
+				msg = `ErrorEvent: ${ev.message || "No message"} (type: ${ev.type || "unknown"})`;
+			}
+			const stack = err instanceof Error ? err.stack : undefined;
+			logger.error(`Download failed critically: ${msg}`, `Engine:${id.substring(0,6)}`, stack);
 			this.updateStatus(id, {
 				status: "error",
 				speedBps: 0,
@@ -446,23 +502,57 @@ class DownloadsEngine {
 		}
 	}
 
-	public async fetchUrlInfo(url: string): Promise<{ name: string; sizeBytes: number; acceptRanges: boolean; error?: string }> {
+	public async fetchUrlInfo(url: string, headers?: Record<string, string>): Promise<{ name: string; sizeBytes: number; acceptRanges: boolean; headers?: Record<string, string>; error?: string }> {
 		try {
 			logger.info(`Pre-flight fetch info for: ${url}`, "Engine");
 			
 			// Use standard URL resolution where possible
-			let headRes = await fetch(url, { method: "HEAD" });
-			if (!headRes.ok) {
-				headRes = await fetch(url, { method: "GET", headers: { "Range": "bytes=0-0" } });
-			}
-			if (!headRes.ok) {
-				return { name: this.extractFilename(url), sizeBytes: 0, acceptRanges: false, error: `HTTP ${headRes.status}` };
+			const fetchOptions: RequestInit = { 
+				method: "HEAD",
+				headers: {
+					"User-Agent": "FluxDL/1.0.7 (Electrobun; Multi-Segment Download Manager)",
+					...(headers || {})
+				},
+				redirect: "follow"
+			};
+
+			let headRes: Response;
+			try {
+				headRes = await fetch(url, fetchOptions);
+			} catch (e) {
+				// Retry with relaxed TLS if the system CA store is unreachable
+				headRes = await fetch(url, { ...fetchOptions, tls: { rejectUnauthorized: false } } as any);
 			}
 
+			if (!headRes.ok) {
+				const getOptions = {
+					...fetchOptions,
+					method: "GET", 
+					headers: { 
+						...fetchOptions.headers,
+						"Range": "bytes=0-0" 
+					} 
+				};
+				try {
+					headRes = await fetch(url, getOptions);
+				} catch (e) {
+					headRes = await fetch(url, { ...getOptions, tls: { rejectUnauthorized: false } } as any);
+				}
+			}
 			const contentLength = headRes.headers.get("content-length");
 			const acceptRanges = headRes.headers.get("accept-ranges") === "bytes" || headRes.status === 206;
 			let sizeBytes = contentLength ? parseInt(contentLength) : 0;
 
+			const serverHeaders: Record<string, string> = {};
+			headRes.headers.forEach((v, k) => {
+				if (["etag", "last-modified", "server", "content-type", "accept-ranges"].includes(k.toLowerCase())) {
+					serverHeaders[k] = v;
+				}
+			});
+
+			if (!headRes.ok) {
+				return { name: this.extractFilename(url), sizeBytes: 0, acceptRanges: false, error: `HTTP ${headRes.status} ${headRes.statusText}`, headers: serverHeaders };
+			}
 			// Check content-disposition for filename
 			let name = "";
 			const disposition = headRes.headers.get("content-disposition");
@@ -472,7 +562,7 @@ class DownloadsEngine {
 			}
 			if (!name) name = this.extractFilename(url);
 
-			return { name, sizeBytes, acceptRanges };
+			return { name, sizeBytes, acceptRanges, headers: serverHeaders };
 		} catch (e) {
 			logger.error(`fetchUrlInfo failed for ${url}`, "Engine", e);
 			return { name: this.extractFilename(url), sizeBytes: 0, acceptRanges: false, error: String(e) };

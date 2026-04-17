@@ -1,20 +1,20 @@
 import { Pause, Play, X, FolderOpen, Link2, RotateCw } from "lucide-react";
+import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import {
-  type Download,
   fileKindStyles,
   formatBytes,
   formatEta,
   formatSpeed,
 } from "@/lib/downloads-data";
+import { useDownloadStore } from "@/store/downloads";
 
-interface Props {
-  download: Download | null;
-  onToggle: () => void;
-  onRemove: () => void;
-}
+export function DetailPanel() {
+  const selectedId = useDownloadStore(state => state.selectedId);
+  const download = useDownloadStore(state => state.downloads.find(d => d.id === selectedId) || null);
+  const toggleDownload = useDownloadStore(state => state.toggleDownload);
+  const removeDownload = useDownloadStore(state => state.removeDownload);
 
-export function DetailPanel({ download, onToggle, onRemove }: Props) {
   if (!download) {
     return (
       <aside className="w-[300px] min-w-[300px] bg-surface-1 border-l border-border flex items-center justify-center text-muted-foreground-2 text-sm">
@@ -23,9 +23,9 @@ export function DetailPanel({ download, onToggle, onRemove }: Props) {
     );
   }
 
-  const pct = (download.downloadedBytes / download.sizeBytes) * 100;
+  const pct = download.sizeBytes > 0 ? (download.downloadedBytes / download.sizeBytes) * 100 : 0;
   const remaining = download.sizeBytes - download.downloadedBytes;
-  const kindStyle = fileKindStyles[download.kind];
+  const kindStyle = fileKindStyles[download.kind] || fileKindStyles.img;
 
   // Generate a fake speed history for chart
   const history = Array.from({ length: 24 }).map((_, i) => {
@@ -121,6 +121,14 @@ export function DetailPanel({ download, onToggle, onRemove }: Props) {
           <Row label="Category" value={download.category} />
           {download.checksum && <Row label="Checksum" value={download.checksum} mono />}
         </Section>
+
+        {download.serverHeaders && Object.keys(download.serverHeaders).length > 0 && (
+          <Section title="Network Metadata">
+            {Object.entries(download.serverHeaders).map(([k, v]) => (
+              <Row key={k} label={k} value={v} mono />
+            ))}
+          </Section>
+        )}
       </div>
 
       <div className="p-4 border-t border-border space-y-2">
@@ -130,7 +138,7 @@ export function DetailPanel({ download, onToggle, onRemove }: Props) {
               Open Folder
             </DetailBtn>
           ) : download.status === "error" ? (
-            <DetailBtn icon={<RotateCw className="w-3.5 h-3.5" />} primary onClick={onToggle}>
+            <DetailBtn icon={<RotateCw className="w-3.5 h-3.5" />} primary onClick={() => toggleDownload(download.id)}>
               Retry
             </DetailBtn>
           ) : (
@@ -143,7 +151,7 @@ export function DetailPanel({ download, onToggle, onRemove }: Props) {
                 )
               }
               primary
-              onClick={onToggle}
+              onClick={() => toggleDownload(download.id)}
             >
               {download.status === "paused" || download.status === "queued" ? "Resume" : "Pause"}
             </DetailBtn>
@@ -155,7 +163,7 @@ export function DetailPanel({ download, onToggle, onRemove }: Props) {
             Copy URL
           </DetailBtn>
         </div>
-        <DetailBtn icon={<X className="w-3.5 h-3.5" />} danger onClick={onRemove}>
+        <DetailBtn icon={<X className="w-3.5 h-3.5" />} danger onClick={() => removeDownload(download.id)}>
           Remove from queue
         </DetailBtn>
       </div>

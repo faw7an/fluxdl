@@ -1,68 +1,49 @@
+import { Electroview } from "electrobun/view";
 import { type AppRPC } from "@/shared/rpc";
 
-interface ElectrobunWindow extends Window {
-	electrobun?: {
-		rpc: {
-			request: AppRPC["bun"]["requests"];
-			onMessage: (handler: (name: keyof AppRPC["bun"]["messages"] | string, payload: any) => void) => () => void;
-		};
-	};
-	__electrobun_rpc?: any;
-	rpc?: any;
-}
+let electroview: Electroview<AppRPC> | null = null;
 
 /**
- * Diagnostic utility to scan the window for the Electrobun bridge.
- * Useful for debugging Linux/Wayland injection issues.
+ * Initializes the correct Electrobun RPC bridge using Electroview.
  */
-function scanForBridge(): any | null {
-	const win = window as any;
-	
-	// 1. Check known locations
-	if (win.electrobun?.rpc) return win.electrobun.rpc;
-	if (win.__electrobun_rpc) return win.__electrobun_rpc;
-	if (win.rpc?.request && typeof win.rpc.request === 'function') return win.rpc;
+type Handlers = {
+	downloadProgress?: (payload: AppRPC["bun"]["messages"]["downloadProgress"]) => void;
+	downloadComplete?: (payload: AppRPC["bun"]["messages"]["downloadComplete"]) => void;
+	downloadError?: (payload: AppRPC["bun"]["messages"]["downloadError"]) => void;
+};
 
-	// 2. Scan all properties for bridge-like signatures
-	const candidates = Object.keys(win).filter(key => 
-		key.toLowerCase().includes("rpc") || 
-		key.toLowerCase().includes("electro")
-	);
+let currentHandlers: Handlers = {};
 
-	for (const key of candidates) {
-		const val = win[key];
-		if (val && typeof val === 'object' && (val.request || val.onMessage)) {
-			console.log(`[FluxDL Debug] Potential bridge found at window.${key}`);
-			return val;
-		}
+/**
+ * Initializes the correct Electrobun RPC bridge using Electroview.
+ */
+export function initRPC(messageHandlers?: Handlers): Electroview<AppRPC> {
+	if (messageHandlers) {
+		currentHandlers = { ...currentHandlers, ...messageHandlers };
 	}
 
-	return null;
+	if (electroview) return electroview;
+
+	const rpc = Electroview.defineRPC<AppRPC>({
+		handlers: {
+			requests: {},
+			messages: {
+				downloadProgress: (p) => currentHandlers.downloadProgress?.(p),
+				downloadComplete: (p) => currentHandlers.downloadComplete?.(p),
+				downloadError: (p) => currentHandlers.downloadError?.(p),
+			},
+		},
+	});
+
+	electroview = new Electroview({ rpc });
+	return electroview;
 }
 
 export function getRPC() {
-	return scanForBridge();
+	return electroview?.rpc;
 }
 
-/**
- * Helper to wait for the RPC bridge to be ready.
- * Essential for apps running on Linux where injection can be slightly async.
- */
-export async function waitForRPC(timeoutMs = 10000): Promise<boolean> {
-	const start = Date.now();
-	console.log(`[FluxDL Debug] Waiting for RPC bridge (timeout: ${timeoutMs}ms)...`);
-	
-	while (Date.now() - start < timeoutMs) {
-		const rpc = getRPC();
-		if (rpc) {
-			console.log("[FluxDL Debug] RPC Bridge connected successfully.");
-			return true;
-		}
-		await new Promise(resolve => setTimeout(resolve, 100));
-	}
-	
-	console.error(`[FluxDL Error] RPC Bridge failed to connect after ${timeoutMs}ms.`);
-	// List everything for one final check
-	console.log("[FluxDL Debug] Window Keys:", Object.keys(window).filter(k => !k.startsWith("webkit")));
-	return false;
+// For backward compatibility during migration
+export async function waitForRPC() {
+	return true;
 }
