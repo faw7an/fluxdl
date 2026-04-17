@@ -4,7 +4,7 @@ export default {
 	app: {
 		name: "FluxDL",
 		identifier: "fluxdl.electrobun.dev",
-		version: "1.0.10",
+		version: "1.0.11",
 	},
 	build: {
 		bun: {
