@@ -19,7 +19,12 @@ export type AppRPC = {
 			logMessage: { params: { level: "info" | "warn" | "error"; message: string; context?: string }; response: boolean };
 			exportLogs: { params: Record<string, never>; response: string };
 			fetchUrlInfo: { params: { url: string; headers?: Record<string, string> }; response: { name: string; sizeBytes: number; acceptRanges: boolean; headers?: Record<string, string>; error?: string } };
+			toggleDevTools: { params: Record<string, never>; response: boolean };
 		};
+		messages: {};
+	}>;
+	webview: RPCSchema<{
+		requests: Record<string, never>;
 		messages: {
 			downloadProgress: {
 				id: string;
@@ -31,9 +36,5 @@ export type AppRPC = {
 			downloadComplete: { id: string; path: string };
 			downloadError: { id: string; error: string };
 		};
-	}>;
-	webview: RPCSchema<{
-		requests: Record<string, never>;
-		messages: Record<string, never>;
 	}>;
 };

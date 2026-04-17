@@ -1,5 +1,6 @@
 import { Electroview } from "electrobun/view";
 import { type AppRPC } from "@/shared/rpc";
+import { uiLogger } from "./logger";
 
 let electroview: Electroview<AppRPC> | null = null;
 
@@ -7,9 +8,9 @@ let electroview: Electroview<AppRPC> | null = null;
  * Initializes the correct Electrobun RPC bridge using Electroview.
  */
 type Handlers = {
-	downloadProgress?: (payload: AppRPC["bun"]["messages"]["downloadProgress"]) => void;
-	downloadComplete?: (payload: AppRPC["bun"]["messages"]["downloadComplete"]) => void;
-	downloadError?: (payload: AppRPC["bun"]["messages"]["downloadError"]) => void;
+	downloadProgress?: (payload: AppRPC["webview"]["messages"]["downloadProgress"]) => void;
+	downloadComplete?: (payload: AppRPC["webview"]["messages"]["downloadComplete"]) => void;
+	downloadError?: (payload: AppRPC["webview"]["messages"]["downloadError"]) => void;
 };
 
 let currentHandlers: Handlers = {};
@@ -28,9 +29,18 @@ export function initRPC(messageHandlers?: Handlers): Electroview<AppRPC> {
 		handlers: {
 			requests: {},
 			messages: {
-				downloadProgress: (p) => currentHandlers.downloadProgress?.(p),
-				downloadComplete: (p) => currentHandlers.downloadComplete?.(p),
-				downloadError: (p) => currentHandlers.downloadError?.(p),
+				downloadProgress: (p) => {
+					uiLogger.info(`Received progress for ${p.id.substring(0,6)}: ${p.downloadedBytes} bytes`, "RPC");
+					currentHandlers.downloadProgress?.(p);
+				},
+				downloadComplete: (p) => {
+					uiLogger.info(`Received complete for ${p.id.substring(0,6)}`, "RPC");
+					currentHandlers.downloadComplete?.(p);
+				},
+				downloadError: (p) => {
+					uiLogger.error(`Received error for ${p.id.substring(0,6)}: ${p.error}`, "RPC");
+					currentHandlers.downloadError?.(p);
+				},
 			},
 		},
 	});

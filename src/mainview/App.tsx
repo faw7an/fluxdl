@@ -49,6 +49,22 @@ function App() {
 	// ── Keyboard Shortcuts ─────────────────────────────────────────
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
+			// DevTools: F12, Ctrl+Shift+I, Cmd+Option+I
+			const isDevTools = 
+				e.key === 'F12' || 
+				((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'i') ||
+				((e.ctrlKey || e.metaKey) && e.altKey && e.key.toLowerCase() === 'i');
+
+			if (isDevTools) {
+				e.preventDefault();
+				const rpc = useDownloadStore.getState().initializeRPC; // just to make sure
+				const actualRpc = (window as any).__electrobun?.rpc;
+				if (actualRpc) {
+					actualRpc.request.toggleDevTools({});
+				}
+				return;
+			}
+
 			if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
 				if (e.key === 'n') {
 					e.preventDefault();
@@ -61,8 +77,20 @@ function App() {
 				}
 			}
 		};
+
+		const handleContextMenu = (e: MouseEvent) => {
+			// On Linux, standard context menu is often blocked.
+			// We can eventually implement a custom one here.
+			// For now, we just ensure it doesn't crash or behave weirdly.
+			// e.preventDefault(); 
+		};
+
 		window.addEventListener("keydown", handleKeyDown);
-		return () => window.removeEventListener("keydown", handleKeyDown);
+		window.addEventListener("contextmenu", handleContextMenu);
+		return () => {
+			window.removeEventListener("keydown", handleKeyDown);
+			window.removeEventListener("contextmenu", handleContextMenu);
+		};
 	}, [downloads, pauseAll, resumeAll]);
 
 	// ── Derived state ──────────────────────────────────────────────

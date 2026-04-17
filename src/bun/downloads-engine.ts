@@ -1,6 +1,6 @@
 import PQueue from "p-queue";
 import { join, dirname } from "node:path";
-import { mkdir, unlink, readdir, rmdir } from "node:fs/promises";
+import { mkdir, unlink, rename, open } from "node:fs/promises";
 import { fileTypeFromFile } from "file-type";
 import { DBManager } from "./db";
 import { logger } from "./logger";
@@ -118,9 +118,17 @@ class DownloadsEngine {
 
 	async pause(id: string): Promise<boolean> {
 		const d = this.queue.get(id);
-		if (!d || d.status !== "downloading") return false;
+		if (!d || (d.status !== "downloading" && d.status !== "queued")) return false;
 
 		logger.info(`User paused download`, `Engine:${id.substring(0,6)}`);
+
+		if (d.status === "queued") {
+			// If it's queued but hasn't started executing, we just mark it paused.
+			// It will still be in pQueue, but downloadFile returns immediately if status !== "queued" or "error"
+			this.updateStatus(id, { status: "paused", speedBps: 0, activeSegments: 0 });
+			this.onProgress(id, d.downloadedBytes, 0, 0, "paused");
+			return true;
+		}
 
 		this.controllers.get(id)?.abort("paused");
 		this.controllers.delete(id);
@@ -185,9 +193,10 @@ class DownloadsEngine {
 
 	private async downloadFile(id: string): Promise<void> {
 		const d = this.queue.get(id);
-		if (!d || d.status === "done" || d.status === "downloading") return;
+		
+		if (!d || d.status !== "queued") return;
 
-		logger.debug(`Pre-flight HEAD request started for ${d.url}`, `Engine:${id.substring(0,6)}`);
+		logger.info(`Pre-flight HEAD request started for ${d.url}`, `Engine:${id.substring(0,6)}`);
 
 		const controller = new AbortController();
 		this.controllers.set(id, controller);
@@ -204,11 +213,29 @@ class DownloadsEngine {
 		} catch {}
 
 		const savePath = getSavePath(d.category, d.name, customDir);
-		const partsDir = join(savePath + "_parts");
+		const fluxdlPath = savePath + ".fluxdl";
+		const statePath = savePath + ".fluxdl.state";
 
 		try {
 			await mkdir(dirname(savePath), { recursive: true });
 
+			let savedState: { partsProgress: Record<number, number> } | null = null;
+			try {
+				const stateFile = Bun.file(statePath);
+				if (await stateFile.exists()) {
+					savedState = await stateFile.json();
+				}
+			} catch (e) {}
+
+			// Ensure the target file exists if we have saved state
+			if (savedState) {
+				const fluxdlFile = Bun.file(fluxdlPath);
+				if (!(await fluxdlFile.exists())) {
+					savedState = null; // Invalidate state if file is gone
+				}
+			}
+
+			const timeoutId = setTimeout(() => controller.abort(new Error("Timeout")), 10000); // 10s timeout
 			const fetchOptions: RequestInit = { 
 				method: "HEAD", 
 				signal: controller.signal,
@@ -223,10 +250,14 @@ class DownloadsEngine {
 			try {
 				headRes = await fetch(d.url, fetchOptions);
 			} catch (e) {
-				logger.warn(`Initial HEAD fetch failed, retrying with relaxed TLS: ${String(e)}`, `Engine:${id.substring(0,6)}`);
-				// Fallback for systems with broken CA stores (common in some Linux/Bun environments)
-				headRes = await fetch(d.url, { ...fetchOptions, tls: { rejectUnauthorized: false } } as any);
+				if (!(e instanceof Error && e.message === "Timeout")) {
+					logger.warn(`Initial HEAD fetch failed, retrying with relaxed TLS: ${String(e)}`, `Engine:${id.substring(0,6)}`);
+					headRes = await fetch(d.url, { ...fetchOptions, tls: { rejectUnauthorized: false } } as any);
+				} else {
+					throw e;
+				}
 			}
+			clearTimeout(timeoutId);
 
 			if (!headRes.ok) {
 				const getOptions = {
@@ -237,11 +268,17 @@ class DownloadsEngine {
 						"Range": "bytes=0-0" 
 					},
 				};
+				const getTimeoutId = setTimeout(() => controller.abort(new Error("Timeout")), 10000);
 				try {
 					headRes = await fetch(d.url, getOptions);
 				} catch (e) {
-					headRes = await fetch(d.url, { ...getOptions, tls: { rejectUnauthorized: false } } as any);
+					if (!(e instanceof Error && e.message === "Timeout")) {
+						headRes = await fetch(d.url, { ...getOptions, tls: { rejectUnauthorized: false } } as any);
+					} else {
+						throw e;
+					}
 				}
+				clearTimeout(getTimeoutId);
 			}
 
 			const contentLength = headRes.headers.get("content-length");
@@ -257,7 +294,6 @@ class DownloadsEngine {
 			});
 
 			this.updateStatus(id, { sizeBytes: totalSize, serverHeaders });
-			await mkdir(partsDir, { recursive: true });
 
 			// If server doesn't support ranges or size is unknown, force 1 segment
 			const effectiveSegments = (acceptRanges && totalSize > 0) ? numSegments : 1;
@@ -272,20 +308,34 @@ class DownloadsEngine {
 			}
 
 			const partsProgress = new Map<number, number>();
-			for (let i = 0; i < ranges.length; i++) partsProgress.set(i, 0);
+			let totalDownloadedBytes = 0;
+			for (let i = 0; i < ranges.length; i++) {
+				const bytes = savedState?.partsProgress?.[i] || 0;
+				partsProgress.set(i, bytes);
+				totalDownloadedBytes += bytes;
+			}
 			
+			// Re-create the sparse file if it doesn't exist
+			const fluxdlFile = Bun.file(fluxdlPath);
+			if (!(await fluxdlFile.exists())) {
+				const fh = await open(fluxdlPath, "w");
+				if (totalSize > 0) await fh.truncate(totalSize);
+				await fh.close();
+				totalDownloadedBytes = 0;
+				for (let i = 0; i < ranges.length; i++) partsProgress.set(i, 0);
+			}
+
 			const activeWorkers = new Set<number>();
 			const activeWorkerInstances: Worker[] = [];
 			this.workers.set(id, activeWorkerInstances);
 
 			this.updateStatus(id, { activeSegments: effectiveSegments });
 			
-			let lastDownloadSweep = 0;
+			let lastDownloadSweep = totalDownloadedBytes;
 			let lastTimeSweep = Date.now();
 			let currentEmaSpeed = 0;
 			const EMA_ALPHA = 0.2;
 			let tickCount = 0;
-			let totalDownloadedBytes = 0;
 			let firstPulse = true;
 
 			const workerPromises = ranges.map((range, index) => {
@@ -296,13 +346,13 @@ class DownloadsEngine {
 					activeWorkerInstances.push(worker);
 					activeWorkers.add(index);
 
-					const partPath = join(partsDir, `part.${index}`);
 					worker.postMessage({
 						url: d.url,
 						startByte: range.start,
 						endByte: range.end >= 0 ? range.end : Number.MAX_SAFE_INTEGER,
 						segmentIndex: index,
-						savePath: partPath,
+						savePath: fluxdlPath,
+						downloaded: partsProgress.get(index) || 0,
 						headers: d.customHeaders,
 					});
 
@@ -345,6 +395,7 @@ class DownloadsEngine {
 								tickCount++;
 								if (tickCount % 10 === 0) {
 									this.updateStatus(id, { downloadedBytes: totalDownloadedBytes, speedBps: currentEmaSpeed, activeSegments: activeWorkers.size });
+									Bun.write(statePath, JSON.stringify({ partsProgress: Object.fromEntries(partsProgress) })).catch(() => {});
 								}
 							}
 						} else if (msg.type === "completed") {
@@ -369,21 +420,10 @@ class DownloadsEngine {
 			await Promise.all(workerPromises);
 
 			this.updateStatus(id, { status: "downloading", speedBps: 0, activeSegments: 0 });
-			const finalFile = Bun.file(savePath);
-			const writer = finalFile.writer();
 			
-			for (let i = 0; i < ranges.length; i++) {
-				const partPath = join(partsDir, `part.${i}`);
-				const partFile = Bun.file(partPath);
-				if (await partFile.exists()) {
-					for await (const chunk of partFile.stream()) {
-						writer.write(chunk);
-					}
-					await unlink(partPath).catch(() => { });
-				}
-			}
-			await writer.end();
-			await rmdir(partsDir, { recursive: true }).catch(() => { });
+			// Finalize the file
+			await rename(fluxdlPath, savePath);
+			await unlink(statePath).catch(() => {});
 
 			// File type resolution using magic bytes
 			let finalKind = d.kind;
@@ -507,8 +547,11 @@ class DownloadsEngine {
 			logger.info(`Pre-flight fetch info for: ${url}`, "Engine");
 			
 			// Use standard URL resolution where possible
+			const controller = new AbortController();
+			const timeoutId = setTimeout(() => controller.abort(new Error("Timeout")), 3000);
 			const fetchOptions: RequestInit = { 
 				method: "HEAD",
+				signal: controller.signal,
 				headers: {
 					"User-Agent": "FluxDL/1.0.7 (Electrobun; Multi-Segment Download Manager)",
 					...(headers || {})
@@ -516,15 +559,20 @@ class DownloadsEngine {
 				redirect: "follow"
 			};
 
-			let headRes: Response;
+			let headRes: Response | undefined;
 			try {
 				headRes = await fetch(url, fetchOptions);
 			} catch (e) {
 				// Retry with relaxed TLS if the system CA store is unreachable
-				headRes = await fetch(url, { ...fetchOptions, tls: { rejectUnauthorized: false } } as any);
+				if (!(e instanceof Error && e.message === "Timeout")) {
+					headRes = await fetch(url, { ...fetchOptions, tls: { rejectUnauthorized: false } } as any);
+				} else {
+					throw e;
+				}
 			}
+			clearTimeout(timeoutId);
 
-			if (!headRes.ok) {
+			if (!headRes || !headRes.ok) {
 				const getOptions = {
 					...fetchOptions,
 					method: "GET", 
@@ -536,9 +584,15 @@ class DownloadsEngine {
 				try {
 					headRes = await fetch(url, getOptions);
 				} catch (e) {
-					headRes = await fetch(url, { ...getOptions, tls: { rejectUnauthorized: false } } as any);
+					if (!(e instanceof Error && e.message === "Timeout")) {
+						headRes = await fetch(url, { ...getOptions, tls: { rejectUnauthorized: false } } as any);
+					} else {
+						throw e;
+					}
 				}
 			}
+			
+			if (!headRes) throw new Error("Timeout");
 			const contentLength = headRes.headers.get("content-length");
 			const acceptRanges = headRes.headers.get("accept-ranges") === "bytes" || headRes.status === 206;
 			let sizeBytes = contentLength ? parseInt(contentLength) : 0;

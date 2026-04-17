@@ -1,6 +1,6 @@
 declare var self: WorkerGlobalScope;
 
-import { mkdir } from "node:fs/promises";
+import { mkdir, open } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export interface WorkerLaunchData {
@@ -8,7 +8,8 @@ export interface WorkerLaunchData {
 	startByte: number;
 	endByte: number; // inclusive
 	segmentIndex: number;
-	savePath: string; // The .part.N file
+	savePath: string; // The .fluxdl file
+	downloaded: number; // Bytes already downloaded for this segment
 	headers?: Record<string, string>;
 }
 
@@ -26,22 +27,18 @@ self.onmessage = async (event: MessageEvent) => {
 		return;
 	}
 
-	const { url, startByte, endByte, segmentIndex, savePath, headers: customHeaders } = data as WorkerLaunchData;
+	const { url, startByte, endByte, segmentIndex, savePath, downloaded: initialDownloaded, headers: customHeaders } = data as WorkerLaunchData;
 
-	let downloaded = 0;
+	let downloaded = initialDownloaded || 0;
 	let lastEmit = Date.now();
 	let lastBytes = 0;
 
 	try {
 		await mkdir(dirname(savePath), { recursive: true });
-		let currentStart = startByte;
+		let currentStart = startByte + downloaded;
 		
-		// If part file exists, we resume from its size
+		// We write directly to the shared .fluxdl file
 		const file = Bun.file(savePath);
-		if (await file.exists()) {
-			downloaded = file.size;
-			currentStart += downloaded;
-		}
 
 		if (currentStart > endByte) {
 			log("info", "Already downloaded this chunk completely.", segmentIndex);
@@ -57,8 +54,12 @@ self.onmessage = async (event: MessageEvent) => {
 			...(customHeaders || {})
 		};
 
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(new Error("Connection Timeout")), 15000);
+
 		const fetchOptions: RequestInit = { 
 			headers,
+			signal: controller.signal,
 			redirect: "follow"
 		};
 
@@ -66,9 +67,13 @@ self.onmessage = async (event: MessageEvent) => {
 		try {
 			res = await fetch(url, fetchOptions);
 		} catch (e) {
-			// Fallback for systems with broken CA stores
-			res = await fetch(url, { ...fetchOptions, tls: { rejectUnauthorized: false } } as any);
+			if (!(e instanceof Error && e.message === "Connection Timeout")) {
+				res = await fetch(url, { ...fetchOptions, tls: { rejectUnauthorized: false } } as any);
+			} else {
+				throw e;
+			}
 		}
+		clearTimeout(timeoutId);
 
 		if (!res.ok && res.status !== 206) {
 			log("error", `HTTP ${res.status} ${res.statusText}`, segmentIndex);
@@ -82,8 +87,7 @@ self.onmessage = async (event: MessageEvent) => {
 
 		log("info", `Starting fetch for range ${currentStart}-${endByte}`, segmentIndex);
 
-		// ✅ FIX: Use position parameter to append to partial file instead of overwriting from 0
-		const writer = file.writer({ position: downloaded });
+		const fh = await open(savePath, "r+");
 		const reader = res.body.getReader();
 
 		// Ensure we report base downloaded bytes first
@@ -93,8 +97,9 @@ self.onmessage = async (event: MessageEvent) => {
 			const { done, value } = await reader.read();
 			if (done) break;
 
-			writer.write(value);
+			await fh.write(value, 0, value.length, currentStart);
 			downloaded += value.byteLength;
+			currentStart += value.byteLength;
 
 			// Optimized tracking: Only check clock every 64KB to save CPU
 			if (downloaded - lastBytes > 65536) {
@@ -116,7 +121,7 @@ self.onmessage = async (event: MessageEvent) => {
 			}
 		}
 
-		await writer.end();
+		await fh.close();
 
 		// Final emit
 		postMessage({ 

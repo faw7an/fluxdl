@@ -90,6 +90,10 @@ const myWebviewRPC = BrowserView.defineRPC<AppRPC>({
 				if (!engine) throw new Error("Engine not initialized");
 				return engine.fetchUrlInfo(params.url, params.headers);
 			},
+			toggleDevTools: async () => {
+				mainWindow.webview.toggleDevTools();
+				return true;
+			},
 		},
 		messages: {},
 	},
@@ -105,6 +109,8 @@ const mainWindow = new BrowserWindow({
 		x: 200,
 		y: 200,
 	},
+	renderer: "cef",
+	
 	rpc: myWebviewRPC,
 });
 
