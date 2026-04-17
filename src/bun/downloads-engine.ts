@@ -53,6 +53,7 @@ class DownloadsEngine {
 	private workers = new Map<string, Worker[]>();
 	private controllers = new Map<string, AbortController>();
 	private pQueue: PQueue;
+	private globalSpeedLimitBps = 0;
 
 	private onProgress: ProgressCallback;
 	private onComplete: CompleteCallback;
@@ -66,6 +67,9 @@ class DownloadsEngine {
 		const maxConcurrent = parseInt(this.db.getSetting("max_concurrent_downloads", "3"), 10) || 3;
 		this.pQueue = new PQueue({ concurrency: maxConcurrent });
 
+		const savedLimit = parseInt(this.db.getSetting("global_speed_limit_kbps", "0"), 10);
+		this.globalSpeedLimitBps = savedLimit * 1024;
+
 		const stored = this.db.getAllDownloads();
 		for (const d of stored) {
 			if (d.status === "downloading" || d.status === "queued") {
@@ -77,6 +81,30 @@ class DownloadsEngine {
 				this.pQueue.add(() => this.downloadFile(d.id));
 			} else {
 				this.queue.set(d.id, d);
+			}
+		}
+	}
+
+	private rebalanceSpeedLimits() {
+		if (this.globalSpeedLimitBps <= 0) {
+			for (const workerArray of this.workers.values()) {
+				for (const worker of workerArray) worker.postMessage({ type: "set_limit", limitBps: 0 });
+			}
+			return;
+		}
+
+		let totalActiveSegments = 0;
+		for (const workerArray of this.workers.values()) {
+			totalActiveSegments += workerArray.length;
+		}
+
+		if (totalActiveSegments === 0) return;
+
+		const limitPerWorker = Math.floor(this.globalSpeedLimitBps / totalActiveSegments);
+
+		for (const workerArray of this.workers.values()) {
+			for (const worker of workerArray) {
+				worker.postMessage({ type: "set_limit", limitBps: limitPerWorker });
 			}
 		}
 	}
@@ -372,7 +400,10 @@ class DownloadsEngine {
 						savePath: fluxdlPath,
 						downloaded: downloadedBytes,
 						headers: d.customHeaders,
+						limitBps: 0 // Will be overwritten by rebalanceSpeedLimits instantly
 					});
+
+					this.rebalanceSpeedLimits();
 
 					worker.onmessage = (event) => {
 						const msg = event.data;
@@ -463,23 +494,26 @@ class DownloadsEngine {
 									workerPromises.push(spawnWorker(newIndex, splitPoint, oldSlowRange.end, 0));
 									resolve();
 									return;
+									}
 								}
+
+								resolve();
+								this.rebalanceSpeedLimits();
+							} else if (msg.type === "error") {
+								worker.terminate();
+								reject(new Error(`Worker ${index} failed: ${msg.error}`));
+								this.rebalanceSpeedLimits();
 							}
+						};
+						worker.onerror = (err) => { worker.terminate(); reject(err); this.rebalanceSpeedLimits(); };
 
-							resolve();
-						} else if (msg.type === "error") {
+						// Handle external abortion
+						controller.signal.addEventListener("abort", () => {
 							worker.terminate();
-							reject(new Error(`Worker ${index} failed: ${msg.error}`));
-						}
-					};
-					worker.onerror = (err) => { worker.terminate(); reject(err); };
-
-					// Handle external abortion
-					controller.signal.addEventListener("abort", () => {
-						worker.terminate();
-						reject(new Error("paused"));
+							reject(new Error("paused"));
+							this.rebalanceSpeedLimits();
+						});
 					});
-				});
 			};
 
 			for (let i = 0; i < ranges.length; i++) {
@@ -623,6 +657,9 @@ class DownloadsEngine {
 		this.db.updateSetting(key, value);
 		if (key === "max_concurrent_downloads") {
 			this.updateMaxConcurrency(parseInt(value) || 3);
+		} else if (key === "global_speed_limit_kbps") {
+			this.globalSpeedLimitBps = parseInt(value, 10) * 1024;
+			this.rebalanceSpeedLimits();
 		}
 	}
 

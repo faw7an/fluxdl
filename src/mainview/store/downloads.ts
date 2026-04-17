@@ -25,6 +25,7 @@ interface DownloadStore {
 	removeDownload: (id: string) => void;
 	pauseAll: () => void;
 	resumeAll: () => void;
+	resumeErrored: () => void;
 	clearCompleted: () => void;
 	
 	// RPC setup
@@ -167,11 +168,16 @@ export const useDownloadStore = create<DownloadStore>((set, get) => ({
 	resumeAll: () => {
 		const rpc = getRPC();
 		if (!rpc) return;
-		const paused = get().downloads.filter(d => d.status === "paused");
+		const paused = get().downloads.filter(d => d.status === "paused" || d.status === "queued" || d.status === "error");
 		paused.forEach(d => rpc.request.resumeDownload({ id: d.id }));
-		if (paused.length > 0) toast("Resumed all transfers");
+		toast("Resuming all downloads");
 	},
-
+	resumeErrored: () => {
+		const rpc = getRPC();
+		if (!rpc) return;
+		const errored = get().downloads.filter(d => d.status === "error");
+		errored.forEach(d => rpc.request.resumeDownload({ id: d.id }));
+	},
 	clearCompleted: () => {
 		const rpc = getRPC();
 		if (!rpc) return;

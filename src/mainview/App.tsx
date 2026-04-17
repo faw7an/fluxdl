@@ -54,6 +54,31 @@ function App() {
 		fetchDownloads();
 	}, []);
 
+	// ── Network Auto-Recovery ──────────────────────────────────────────────────
+	useEffect(() => {
+		const handleOnline = () => {
+			const erroredCount = useDownloadStore.getState().downloads.filter(d => d.status === "error").length;
+			if (erroredCount > 0) {
+				toast.success("Network restored! Auto-resuming failed downloads.");
+				useDownloadStore.getState().resumeErrored();
+			} else {
+				toast.info("Network connection restored.");
+			}
+		};
+
+		const handleOffline = () => {
+			toast.warning("Network connection lost. Downloads will pause or fail.", { duration: 5000 });
+		};
+
+		window.addEventListener("online", handleOnline);
+		window.addEventListener("offline", handleOffline);
+		
+		return () => {
+			window.removeEventListener("online", handleOnline);
+			window.removeEventListener("offline", handleOffline);
+		};
+	}, []);
+
 	// ── Keyboard Shortcuts ─────────────────────────────────────────
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {

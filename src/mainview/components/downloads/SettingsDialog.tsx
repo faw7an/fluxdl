@@ -104,6 +104,23 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
 							/>
 						</div>
 
+						<div className="grid grid-cols-4 items-center gap-4">
+							<Label htmlFor="speedLimit" className="text-right text-[13px] font-medium">
+								Speed Limit
+							</Label>
+							<div className="col-span-3 flex items-center gap-2">
+								<Input
+									id="speedLimit"
+									type="number"
+									min="0"
+									value={speedLimit}
+									onChange={(e) => setSpeedLimit(e.target.value)}
+									className="bg-surface-2 border-border focus-visible:ring-primary h-8"
+								/>
+								<span className="text-[12px] text-muted-foreground-2 whitespace-nowrap">KB/s (0 = unlimited)</span>
+							</div>
+						</div>
+
                         <div className="grid grid-cols-4 items-start gap-4">
 							<Label htmlFor="catDirs" className="text-right text-[13px] font-medium pt-2">
 								Directories

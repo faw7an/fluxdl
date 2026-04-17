@@ -11,11 +11,13 @@ export interface WorkerLaunchData {
 	savePath: string; // The .fluxdl file
 	downloaded: number; // Bytes already downloaded for this segment
 	headers?: Record<string, string>;
+	limitBps?: number;
 }
 
 export type WorkerMessage = 
 	| WorkerLaunchData
 	| { type: "abort" }
+	| { type: "set_limit"; limitBps: number }
 	| { type: "shrink"; newEndByte: number };
 
 function log(level: "info" | "warn" | "error", message: string, segmentIndex: number | string) {
@@ -23,6 +25,7 @@ function log(level: "info" | "warn" | "error", message: string, segmentIndex: nu
 }
 
 let activeEndByte = -1;
+let activeLimitBps = 0;
 
 // @ts-ignore
 self.onmessage = async (event: MessageEvent) => {
@@ -35,14 +38,18 @@ self.onmessage = async (event: MessageEvent) => {
 			activeEndByte = data.newEndByte;
 			log("info", `Shrunk endByte to ${activeEndByte}`, -1);
 			return;
+		} else if (data.type === "set_limit") {
+			activeLimitBps = data.limitBps;
+			return;
 		}
 	}
 
-	const { url, startByte, endByte, segmentIndex, savePath, downloaded: initialDownloaded, headers: customHeaders } = data as WorkerLaunchData;
+	const { url, startByte, endByte, segmentIndex, savePath, downloaded: initialDownloaded, headers: customHeaders, limitBps } = data as WorkerLaunchData;
 
 	if (activeEndByte === -1) {
 		activeEndByte = endByte;
 	}
+	activeLimitBps = limitBps || 0;
 
 	let downloaded = initialDownloaded || 0;
 	let lastEmit = Date.now();
@@ -111,6 +118,8 @@ self.onmessage = async (event: MessageEvent) => {
 				break;
 			}
 
+			const chunkStart = performance.now(); // <-- Track when we start pulling the chunk
+
 			const { done, value } = await reader.read();
 			if (done) break;
 
@@ -124,6 +133,18 @@ self.onmessage = async (event: MessageEvent) => {
 			await fh.write(bytesToWrite, 0, bytesToWrite.length, currentStart);
 			downloaded += bytesToWrite.byteLength;
 			currentStart += bytesToWrite.byteLength;
+
+			// ── DYNAMIC THROTTLING ENGINE ──
+			if (activeLimitBps > 0) {
+				const elapsedMs = performance.now() - chunkStart;
+				// Target time = (Bytes / BytesPerSecond) * 1000
+				const targetMs = (bytesToWrite.byteLength / activeLimitBps) * 1000;
+				
+				// If we downloaded it faster than the limit allows, sleep the thread
+				if (targetMs > elapsedMs) {
+					await Bun.sleep(targetMs - elapsedMs);
+				}
+			}
 
 			// Optimized tracking: Only check clock every 64KB to save CPU
 			if (downloaded - lastBytes > 65536) {
